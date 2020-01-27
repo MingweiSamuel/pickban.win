@@ -1,0 +1,13 @@
+use serde::{Serialize, Deserialize};
+use riven::consts::Tier;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Summoner {
+    pub encrypted_summoner_id: String,
+    pub encrypted_account_id:  Option<String>,
+    pub league_id: String,
+    pub rank_tier: Tier,
+    pub games_per_day: Option<f32>,
+    pub ts: Option<u64>,
+}
+

@@ -7,7 +7,7 @@ use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 
 #[allow(dead_code)]
-pub fn csvgz_writer<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, Error> {
+pub fn writer<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, Error> {
     let file    = File::create(path)?;
     let encoder = GzEncoder::new(file, Compression::default());
     let writer  = csv::Writer::from_writer(encoder);
@@ -15,7 +15,7 @@ pub fn csvgz_writer<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<Fil
 }
 
 #[allow(dead_code)]
-pub fn csvgz_reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, Error> {
+pub fn reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, Error> {
     let file    = File::create(path)?;
     let decoder = GzDecoder::new(file);
     let reader  = csv::Reader::from_reader(decoder);
