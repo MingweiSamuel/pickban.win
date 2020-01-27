@@ -56,6 +56,7 @@ pub struct HyBitSet {
 }
 
 impl HyBitSet {
+    #[allow(dead_code)]
     pub fn new() -> HyBitSet {
         HyBitSet {
             segment_map: HashMap::new(),
