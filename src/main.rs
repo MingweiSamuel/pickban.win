@@ -47,6 +47,8 @@ mod model;
 mod pipeline;
 
 use std::vec::Vec;
+use std::collections::BinaryHeap;
+use std::error::Error;
 use std::path::PathBuf;
 
 use futures::future::join_all;
@@ -56,9 +58,77 @@ use riven::consts::QueueType;
 use riven::consts::Tier;
 use riven::consts::Division;
 
-use model::summoner::Summoner;
+use model::summoner::{ Summoner, SummonerOldest };
+use util::csv_find;
+use util::csvgz;
+
+pub fn run() -> Result<(), Box<dyn Error>> {
+    println!("Hello OwOrld.");
+
+    let region = Region::NA;
+    let update: usize = 100;
+
+    let summoner_path = csv_find::find_latest_csvgz(region, "summoner")
+        .ok_or("Failed to find summoner csv.gz.")?;
+    println!("{:?}", summoner_path);
+    let mut summoner_reader = csvgz::reader(summoner_path)?;
+    let summoner_reader = summoner_reader
+        .deserialize()
+        .map(|summoner_res| SummonerOldest(summoner_res.expect("ERR")));
+
+
+    let heap = filter_min_n(update, summoner_reader);
+
+    for (i, summoner) in heap.into_iter().enumerate() {
+        let summoner = summoner.0;
+        println!("{}: {}", i, summoner.encrypted_summoner_id);
+    }
+
+    println!("Done.");
+    Ok(())
+}
+
+// use std::cmp::Reverse;
+use std::iter::IntoIterator;
+pub fn filter_min_n<I, T>(limit: usize, iter: I) -> BinaryHeap<T> where
+    I: IntoIterator<Item = T>,
+    T: Ord,
+{
+    let mut heap = BinaryHeap::with_capacity(limit);
+
+    for item in iter {
+        if heap.len() < limit {
+            heap.push(item);
+        }
+        else if *heap.peek().unwrap() > item {
+            heap.pop();
+            heap.push(item);
+        }
+    }
+
+    heap
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_filter_min_n() {
+        let values: [i32; 10] = [ 5, 2, -10, 12, 4, 15, -15, 0, -10, -1 ];
+        let min_values = filter_min_n(5, &values);
+        println!("{:?}", min_values.into_iter().collect::<Vec<_>>());
+    }
+}
 
 pub fn main() {
+    run().unwrap();
+}
+
+
+
+
+pub fn main2() {
     println!("Hello, world!~");
 
     let region = Region::NA;

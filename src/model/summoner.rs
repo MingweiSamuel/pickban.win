@@ -11,3 +11,22 @@ pub struct Summoner {
     pub ts: Option<u64>,
 }
 
+pub struct SummonerOldest(pub Summoner);
+
+impl Ord for SummonerOldest {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.ts.cmp(&other.0.ts)
+    }
+}
+impl PartialOrd for SummonerOldest {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for SummonerOldest {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ts == other.0.ts
+    }
+}
+impl Eq for SummonerOldest {}
+

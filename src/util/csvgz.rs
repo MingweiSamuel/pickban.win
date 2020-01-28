@@ -16,7 +16,7 @@ pub fn writer<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, E
 
 #[allow(dead_code)]
 pub fn reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, Error> {
-    let file    = File::create(path)?;
+    let file    = File::open(path)?;
     let decoder = GzDecoder::new(file);
     let reader  = csv::Reader::from_reader(decoder);
     Ok(reader)
