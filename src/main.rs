@@ -97,13 +97,16 @@ pub fn filter_min_n<I, T>(limit: usize, iter: I) -> BinaryHeap<T> where
     let mut heap = BinaryHeap::with_capacity(limit);
 
     for item in iter {
-        if heap.len() < limit {
-            heap.push(item);
-        }
-        else if *heap.peek().unwrap() > item {
+        // If we're fullt we'll need to pop.
+        if heap.len() >= limit {
+            // But if the item is already larger than the largest
+            // item in the heap, then we should ignore the item.
+            if item >= *heap.peek().unwrap() {
+                continue;
+            }
             heap.pop();
-            heap.push(item);
         }
+        heap.push(item);
     }
 
     heap
@@ -115,8 +118,8 @@ mod test {
 
     #[test]
     fn test_filter_min_n() {
-        let values: [i32; 10] = [ 5, 2, -10, 12, 4, 15, -15, 0, -10, -1 ];
-        let min_values = filter_min_n(5, &values);
+        let values = vec![ 5, 2, -10, 12, 4, 15, -15, 0, -10, -1 ];
+        let min_values = filter_min_n(5, values);
         println!("{:?}", min_values.into_iter().collect::<Vec<_>>());
     }
 }
