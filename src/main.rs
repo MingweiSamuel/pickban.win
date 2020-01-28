@@ -81,8 +81,13 @@ pub fn main() {
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
 
-            for tier in [ Tier::CHALLENGER, Tier::GRANDMASTER, Tier::GRANDMASTER, Tier::DIAMOND, Tier::PLATINUM ].iter() {
+            for tier in [
+                Tier::CHALLENGER, Tier::GRANDMASTER, Tier::GRANDMASTER,
+                Tier::DIAMOND, Tier::PLATINUM, Tier::GOLD,
+                Tier::SILVER, Tier::BRONZE, Tier::IRON,
+            ].iter() {
                 for division in [ Division::I, Division::II, Division::III, Division::IV ].iter() {
+                    println!("Starting {} {}.", tier, division);
 
                     let mut page: i32 = 1;
 
@@ -97,6 +102,7 @@ pub fn main() {
                         }
 
                         let league_batch = join_all(league_batch).await;
+                        let ts = util::time::epoch_millis();
                         for league in league_batch.into_iter() {
                             let league_entries = league.unwrap_or(Vec::new()); // Error goes away here (may be bad).
                             if 0 == league_entries.len() {
@@ -109,7 +115,7 @@ pub fn main() {
                                     league_id: league_entry.league_id,
                                     rank_tier: league_entry.tier,
                                     games_per_day: None,
-                                    ts: Some(util::time::epoch_millis()),
+                                    ts: Some(ts),
                                 }).expect("failed to serialize");
                             }
                         }
