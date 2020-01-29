@@ -52,7 +52,8 @@ impl Segment {
 }
 
 pub struct HyBitSet {
-    segment_map: HashMap<usize, Segment>
+    segment_map: HashMap<usize, Segment>,
+    len: usize,
 }
 
 impl HyBitSet {
@@ -60,6 +61,7 @@ impl HyBitSet {
     pub fn new() -> HyBitSet {
         HyBitSet {
             segment_map: HashMap::new(),
+            len: 0,
         }
     }
 
@@ -77,17 +79,34 @@ impl HyBitSet {
     }
 
     #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[allow(dead_code)]
     pub fn insert(&mut self, val: usize) -> bool {
         let off = Self::get_off(val);
         let seg = self.get_seg(val);
-        seg.insert(off)
+        if seg.insert(off) {
+            true
+        }
+        else {
+            self.len += 1;
+            false
+        }
     }
 
     #[allow(dead_code)]
     pub fn remove(&mut self, val: usize) -> bool {
         let off = Self::get_off(val);
         let seg = self.get_seg(val);
-        seg.remove(off)
+        if seg.remove(off) {
+            self.len -= 1;
+            true
+        }
+        else {
+            false
+        }
     }
 
     #[allow(dead_code)]
@@ -110,15 +129,18 @@ mod test {
     #[test]
     fn test_basic() {
         let mut bs = HyBitSet::new();
+        assert_eq!(0, bs.len());
 
         assert!(false == bs.insert(126_usize));
         assert!(false == bs.insert(127_usize));
+        assert_eq!(2, bs.len());
 
         assert!(true  == bs.contains(127_usize));
         assert!(false == bs.contains(0_usize));
 
         assert!(true  == bs.remove(127_usize));
         assert!(false == bs.contains(127_usize));
+        assert_eq!(1, bs.len());
 
         assert!(true  == bs.contains(126_usize));
     }
@@ -126,15 +148,18 @@ mod test {
     #[test]
     fn test_large() {
         let mut bs = HyBitSet::new();
+        assert_eq!(0, bs.len());
 
         assert!(false == bs.insert(3_617_178_774_usize));
         assert!(false == bs.insert(3_651_972_316_usize));
+        assert_eq!(2, bs.len());
 
         assert!(true  == bs.contains(3_651_972_316_usize));
         assert!(false == bs.contains(0_usize));
 
         assert!(true  == bs.remove(3_651_972_316_usize));
         assert!(false == bs.contains(3_651_972_316_usize));
+        assert_eq!(1, bs.len());
 
         assert!(true  == bs.contains(3_617_178_774_usize));
     }
@@ -142,15 +167,18 @@ mod test {
     #[test]
     fn test_wide() {
         let mut bs = HyBitSet::new();
+        assert_eq!(0, bs.len());
 
         assert!(false == bs.insert(5_usize));
         assert!(false == bs.insert(3_651_972_316_usize));
+        assert_eq!(2, bs.len());
 
         assert!(true  == bs.contains(3_651_972_316_usize));
         assert!(false == bs.contains(0_usize));
 
         assert!(true  == bs.remove(3_651_972_316_usize));
         assert!(false == bs.contains(3_651_972_316_usize));
+        assert_eq!(1, bs.len());
 
         assert!(true  == bs.contains(5_usize));
     }
