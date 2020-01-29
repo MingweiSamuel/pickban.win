@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{ File, OpenOptions };
 use std::io::Error;
 use std::path::Path;
 
@@ -20,4 +20,14 @@ pub fn reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, E
     let decoder = GzDecoder::new(file);
     let reader  = csv::Reader::from_reader(decoder);
     Ok(reader)
+}
+
+#[allow(dead_code)]
+pub fn appender<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, Error> {
+    let file    = OpenOptions::new().write(true).append(true).open(path)?;
+    let encoder = GzEncoder::new(file, Compression::default());
+    let writer  = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(encoder);
+    Ok(writer)
 }

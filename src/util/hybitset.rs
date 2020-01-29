@@ -1,73 +1,87 @@
 use std::collections::HashMap;
 
-const SEGMENT_USIZE_LEN: usize = 128;
-const BITS_PER_USIZE:    usize = 8 * std::mem::size_of::<usize>();
-const SEGMENT_LEN:       usize = SEGMENT_USIZE_LEN * BITS_PER_USIZE;
+use serde::{Deserialize, Serialize, Serializer };
 
-struct Segment([usize; SEGMENT_USIZE_LEN]);
+const SEGMENT_BYTE_LEN: usize = 1024;
+const BITS_PER_BYTE:    usize = 8;
+const SEGMENT_LEN:      usize = SEGMENT_BYTE_LEN * BITS_PER_BYTE;
+
+struct Segment([u8; SEGMENT_BYTE_LEN]);
 
 impl Segment {
     pub fn new() -> Segment {
-        Segment([0; SEGMENT_USIZE_LEN])
+        Segment([0; SEGMENT_BYTE_LEN])
     }
 
     #[inline]
-    fn get_usize(&mut self, segment_index: usize) -> &mut usize {
-        let usize_index = segment_index / BITS_PER_USIZE;
-        let usize_val = &mut self.0[usize_index];
-        usize_val
+    fn get_byte(&mut self, segment_index: usize) -> &mut u8 {
+        let byte_index = segment_index / BITS_PER_BYTE;
+        let byte_val = &mut self.0[byte_index];
+        byte_val
     }
 
     #[inline]
-    fn get_mask(segment_index: usize) -> usize {
-        let mask = 1_usize << (segment_index % BITS_PER_USIZE);
+    fn get_mask(segment_index: usize) -> u8 {
+        let mask = 1_u8 << (segment_index % BITS_PER_BYTE);
         mask
     }
 
     pub fn insert(&mut self, segment_index: usize) -> bool {
         let mask = Self::get_mask(segment_index);
-        let usize_val = self.get_usize(segment_index);
+        let byte_val = self.get_byte(segment_index);
 
-        let out = 0 != (mask & *usize_val);
-        *usize_val |= mask;
+        let out = 0 != (mask & *byte_val);
+        *byte_val |= mask;
         out
     }
 
     pub fn remove(&mut self, segment_index: usize) -> bool {
         let mask = Self::get_mask(segment_index);
-        let usize_val = self.get_usize(segment_index);
+        let byte_val = self.get_byte(segment_index);
 
-        let out = 0 != (mask & *usize_val);
-        *usize_val &= !mask;
+        let out = 0 != (mask & *byte_val);
+        *byte_val &= !mask;
         out
     }
 
     pub fn contains(&mut self, segment_index: usize) -> bool {
         let mask = Self::get_mask(segment_index);
-        let usize_val = self.get_usize(segment_index);
+        let byte_val = self.get_byte(segment_index);
 
-        let out = 0 != (mask & *usize_val);
+        let out = 0 != (mask & *byte_val);
         out
     }
 }
 
+impl Serialize for Segment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        base64::encode(&self.0[..]).serialize(serializer)
+    }
+}
+
+#[derive(Serialize)]//, Deserialize)]
 pub struct HyBitSet {
-    segment_map: HashMap<usize, Segment>,
     len: usize,
+    segment_byte_len: usize,
+    segment_map: HashMap<usize, Segment>,
 }
 
 impl HyBitSet {
     #[allow(dead_code)]
     pub fn new() -> HyBitSet {
         HyBitSet {
-            segment_map: HashMap::new(),
             len: 0,
+            segment_byte_len: SEGMENT_BYTE_LEN,
+            segment_map: HashMap::new(),
         }
     }
 
     #[inline]
     fn get_seg(&mut self, val: usize) -> &mut Segment {
-        let seg_id  = val / SEGMENT_LEN;
+        let seg_id  = val - (val % SEGMENT_LEN);
         let segment = self.segment_map.entry(seg_id).or_insert(Segment::new());
         segment
     }
@@ -81,6 +95,10 @@ impl HyBitSet {
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn density(&self) -> f32 {
+        (self.len as f32) / (self.segment_map.len() as f32)
     }
 
     #[allow(dead_code)]
@@ -113,8 +131,7 @@ impl HyBitSet {
     pub fn contains(&mut self, val: usize) -> bool {
         let off = Self::get_off(val);
 
-        let seg_id = val / SEGMENT_LEN;
-
+        let seg_id  = val - (val % SEGMENT_LEN);
         match self.segment_map.get_mut(&seg_id) {
             Some(seg) => seg.contains(off),
             None => false,
