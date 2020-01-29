@@ -58,7 +58,7 @@ impl Serialize for Segment {
     where
         S: Serializer,
     {
-        base64::encode(&self.0[..]).serialize(serializer)
+        base64::encode(&self.0 as &[u8]).serialize(serializer)
     }
 }
 

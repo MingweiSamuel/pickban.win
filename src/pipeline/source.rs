@@ -36,3 +36,7 @@ pub fn get_oldest_summoners(region: Region, update_size: usize) -> Result<impl I
     let oldest_summoners = filter::filter_min_n(update_size, summoner_reader);
     Ok(oldest_summoners.into_iter().map(|s| s.0))
 }
+
+pub fn get_ranked_summoners(region: Region, update_size: usize) { //-> Result<impl Iterator<Item = Summoner>, ()> {
+    panic!("TODO.");
+}
