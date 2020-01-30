@@ -1,6 +1,3 @@
-use std::error::Error;
-use std::collections::BinaryHeap;
-
 use chrono::DateTime;
 use chrono::offset::Utc;
 use riven::consts::Region;
@@ -12,6 +9,7 @@ use crate::model::r#match::Match;
 use crate::model::summoner::{ Summoner, SummonerOldest };
 use super::filter;
 
+#[allow(dead_code)]
 pub fn get_match_hybitset(region: Region, starttime: DateTime<Utc>) -> HyBitSet {
     let mut hbs = HyBitSet::new();
 
@@ -26,6 +24,7 @@ pub fn get_match_hybitset(region: Region, starttime: DateTime<Utc>) -> HyBitSet 
     hbs
 }
 
+#[allow(dead_code)]
 pub fn get_oldest_summoners(region: Region, update_size: usize) -> Result<impl Iterator<Item = Summoner>, std::io::Error> {
     let summoner_path = csv_find::find_latest_csvgz(region, "summoner").expect("Failed to find latest csvgz");
     let mut summoner_reader = csvgz::reader(summoner_path)?;
@@ -35,8 +34,4 @@ pub fn get_oldest_summoners(region: Region, update_size: usize) -> Result<impl I
 
     let oldest_summoners = filter::filter_min_n(update_size, summoner_reader);
     Ok(oldest_summoners.into_iter().map(|s| s.0))
-}
-
-pub fn get_ranked_summoners(region: Region, update_size: usize) { //-> Result<impl Iterator<Item = Summoner>, ()> {
-    panic!("TODO.");
 }

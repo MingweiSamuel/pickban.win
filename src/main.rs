@@ -46,7 +46,7 @@
 //
 
 #[macro_use] extern crate lazy_static;
-#[macro_use] extern crate tokio;
+// #[macro_use] extern crate tokio;
 // #[macro_use] extern crate scan_fmt;
 
 mod util;
@@ -55,37 +55,38 @@ mod pipeline;
 
 use std::vec::Vec;
 use std::error::Error;
-use std::path::PathBuf;
-use std::sync::Mutex;
 
-use chrono::{ DateTime, Duration };
+use chrono::{ Duration };
 use chrono::offset::Utc;
 use futures::future::join_all;
+// use itertools::Itertools;
 use riven::RiotApi;
-use riven::consts::Region;
-use riven::consts::Queue;
-use riven::consts::QueueType;
-use riven::consts::Tier;
+use riven::consts::{ Region, Queue, QueueType };
 use tokio::task;
 
-use model::summoner::{ Summoner, SummonerOldest };
-use util::csv_find;
-use util::csvgz;
-use pipeline::filter;
+use model::summoner::Summoner;
 use pipeline::source;
+use pipeline::source_api;
+use pipeline::mapping_api;
+
+
+lazy_static! {
+    static ref RIOT_API: RiotApi =
+        RiotApi::with_key(include_str!("apikey.txt"));
+}
+
 
 async fn main_async() -> Result<(), Box<dyn Error>> {
     println!("Hello world");
 
     let region = Region::NA;
-    let update_size: usize = 500;
-    let lookbehind = Duration::hours(4);
-    let starttime = Utc::now() - lookbehind;
+    let queue_type = QueueType::RANKED_SOLO_5x5;
+    let queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
-    // Create RiotApi instance from key string.
-    let api_key = include_str!("apikey.txt");
-    let api = RiotApi::with_key(api_key);
-    let api = &api;
+    let update_size: usize = 500;
+    let lookbehind = Duration::days(3);
+    let starttime = Utc::now() - lookbehind;
+    let pagination_batch_size: usize = 10;
 
     // Unlike normal futures, this starts immediately (it seems).
     // Match bitset.
@@ -95,64 +96,49 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let oldest_summoners = task::spawn_blocking(
         move || source::get_oldest_summoners(region, update_size));
     // All ranked summoners.
+    let ranked_summoners = tokio::spawn(
+        source_api::get_ranked_summoners(&RIOT_API, queue_type, region, pagination_batch_size));
 
+    // Join match bitset and oldest selected summoners.
     let (mut match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
+    let oldest_summoners = oldest_summoners?.collect::<Vec<Summoner>>();
 
-    let new_matches = {
-        // Chunk size? Shitty parallelism?
-        let mut new_matches = vec![];
-        let summoner_chunk_size: usize = 10;
-        for summoners_chunk in oldest_summoners?.collect::<Vec<_>>().chunks(summoner_chunk_size) {
-            let chunk_futures = summoners_chunk.into_iter().map(|summoner| {
-                let matches_dto = api.match_v4().get_matchlist(region, &summoner.encrypted_account_id,
-                    Some(starttime.timestamp_millis()), // begin_time
-                    None, // begin_index
-                    None, // champion
-                    None, // end_time
-                    None, // end_index
-                    Some(vec![ Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES ]), // queue
-                    None, // season
-                );
-                matches_dto
-            }).collect::<Vec<_>>();
+    // Get new match IDs via matchlist.
+    let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
+        &RIOT_API, region, 20, oldest_summoners).await;
 
-            let lists_of_matches = join_all(chunk_futures).await;
-            let lists_of_matches = lists_of_matches.into_iter()
-                .flat_map(|m: riven::Result<Option<riven::models::match_v4::Matchlist>>| m.expect("Failed to get matchlist").map_or(vec![], |m| m.matches));
-            for matche in lists_of_matches {
-                // Insert into bitmap. If match was not in bitmap, then add it to new_matches.
-                if !match_hbs.insert(matche.game_id as usize) {
-                    new_matches.push(matche.game_id);
-                }
-            }
-        }
-        new_matches
-    };
+    let new_match_ids = mapping_api::get_new_matchids(
+        &RIOT_API, region, queue, 20, starttime, &oldest_summoners, &mut match_hbs).await;
 
-    println!("New matches len: {}.", new_matches.len());
-    // println!("New matches: {:?}.", new_matches);
+    println!("new_match_ids len: {}.", new_match_ids.len());
 
-    {
-        let matches_chunk_size: usize = 50;
-        for matches_chunk in new_matches.chunks(matches_chunk_size) {
+    // Get new match values.
+    // TODO: this should stream (?).
+    let new_matches = mapping_api::get_matches(
+        &RIOT_API, region, 20, new_match_ids);
+    let new_matches = new_matches.await;
 
-            let chunk_futures = matches_chunk.into_iter()
-                .map(|match_id| api.match_v4().get_match(region, *match_id))
-                .collect::<Vec<_>>();
-
-            let matches = join_all(chunk_futures).await;
-            let matches = matches.into_iter()
-                .map(|m| m.expect("Failed to get matchlist.").expect("Match not found."));
-
-            // TODO: handle matches.
-            let _ = matches;
-        }
-    }
+    // Completion of ranked_summoners map.
+    let ranked_summoners = ranked_summoners.await?;
 
     println!("HBS len: {}.", match_hbs.len());
     println!("HBS density: {}.", match_hbs.density());
     // let j = serde_json::to_string(&match_hbs)?;
     // println!("HBS:\n{}.", j);
+
+    let mut i: u32 = 0;
+    for matche in new_matches {
+        println!("Match: {}.", matche.game_id);
+        for participant in matche.participant_identities {
+            println!("Participant name: {}.", participant.player.summoner_name);
+            println!("Participant tier: {:?}.", ranked_summoners.get(&participant.player.summoner_id).map(|s| s.rank_tier));
+        }
+        println!();
+        i += 1;
+        if i > 10 {
+            break;
+        };
+    };
 
     println!("Done.");
     Ok(())
