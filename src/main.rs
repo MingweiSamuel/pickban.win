@@ -72,7 +72,7 @@ use pipeline::mapping_api;
 
 lazy_static! {
     static ref RIOT_API: RiotApi =
-        RiotApi::with_key(include_str!("apikey.txt"));
+        RiotApi::with_key(include_str!("apikey.txt").trim());
 }
 
 

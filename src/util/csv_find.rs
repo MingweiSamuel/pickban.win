@@ -20,7 +20,8 @@ lazy_static! {
 pub fn find_latest_csvgz(region: Region, name: &str) -> Option<PathBuf> {
 
     let mut latest: Option<PathBuf> = None;
-    for entry in glob_with(&format!("data/{:?}/{}.*.csv.gz", region, name), *MATCH_OPTIONS).expect("Bad glob.") {
+    let pattern = format!("data/{}/{}.*.csv.gz", format!("{:?}", region).to_lowercase(), name);
+    for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("Bad glob.") {
         let entry = Some(entry.ok()?);
         if entry > latest {
             latest = entry;
