@@ -168,12 +168,23 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     };
     // TODO update summoners here.
 
-    // // Write summoners job.
-    // let write_summoners = task::spawn_blocking(
-    //     move || source_fs::write_summoners(region, ranked_summoners.values()));
+
+    // Read back and update summoners.
+    let all_summoners = task::spawn_blocking(
+        move || source_fs::get_all_summoners(region));
+    let all_summoners = all_summoners.await??;
+    // TODO TEMP. Remove timestamps.
+    let all_summoners = all_summoners.map(|mut summoner| {
+        summoner.ts = None;
+        summoner
+    });
+
+    // Write summoners job.
+    let write_summoners = task::spawn_blocking(
+        move || source_fs::write_summoners(region, all_summoners));
 
     // Join not needed since both are already started.
-    // write_summoners.await??;
+    write_summoners.await??;
     write_match_hbs.await?;
 
     println!("Done.");

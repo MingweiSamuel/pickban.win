@@ -50,6 +50,7 @@ mod pipeline;
 
 use std::vec::Vec;
 use std::path::PathBuf;
+use std::error::Error;
 
 use futures::future::join_all;
 use riven::RiotApi;
@@ -59,6 +60,18 @@ use riven::consts::Tier;
 use riven::consts::Division;
 
 use model::summoner::Summoner;
+
+pub fn dyn_err<E: Error + Send + 'static>(e: E) -> Box<dyn Error + Send> {
+    Box::new(e)
+}
+
+pub fn distance<T: std::ops::Sub<Output = T> + Ord>(x: T, y: T) -> T {
+    if x < y {
+        y - x
+    } else {
+        x - y
+    }
+}
 
 pub fn main() {
     println!("Hello, world!~");
@@ -90,7 +103,7 @@ pub fn main() {
                 Tier::SILVER, Tier::BRONZE, Tier::IRON,
             ].iter() {
 
-                let divisions: &[Division] = if tier.is_apex_tier() {
+                let divisions: &[Division] = if tier.is_apex() {
                     &[ Division::I ]
                 } else {
                     &[ Division::I, Division::II, Division::III, Division::IV ]
@@ -130,7 +143,7 @@ pub fn main() {
                             match_entries_out.serialize(Summoner {
                                 encrypted_summoner_id: league_entry.summoner_id,
                                 encrypted_account_id: None,
-                                league_id: league_entry.league_id.to_owned(), // Extra copy, sucks :)
+                                league_id: Some(league_entry.league_id.to_owned()), // Extra copy, sucks :)
                                 rank_tier: Some(league_entry.tier),
                                 games_per_day: None,
                                 ts: Some(ts),
