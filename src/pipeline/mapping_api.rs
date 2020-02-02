@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use chrono::DateTime;
 use chrono::offset::Utc;
 use futures::future::join_all;

@@ -10,7 +10,7 @@ use crate::util::time;
 
 #[allow(dead_code)]
 pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: Region, batch_size: usize)
-    -> HashMap<String, Summoner>
+    -> HashMap<String, Tier>
 {    
     let mut out = HashMap::with_capacity(65_536);
 
@@ -27,8 +27,7 @@ pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: 
         };
 
         for division in divisions.iter() {
-            println!("Starting {} {}.", tier, division);
-            let mut page: i32 = 1;
+            let mut page: usize = 1;
 
             'batchloop: loop {
                 // Batches of multiple pages.
@@ -36,38 +35,42 @@ pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: 
 
                 for _ in 0..batch_size {
                     league_batch.push(
-                        api.league_exp_v4().get_league_entries(region, queue_type, *tier, *division, Some(page)));
+                        api.league_exp_v4().get_league_entries(region, queue_type, *tier, *division, Some(page as i32)));
                     page += 1;
                 };
 
                 let league_batch = join_all(league_batch).await;
-                let ts = time::epoch_millis();
+                // let ts = time::epoch_millis();
 
-                let league_batch = league_batch.into_iter()
-                    .enumerate()
-                    .flat_map(|(i, league_entries)|
-                        league_entries.unwrap_or_else(|e| {
-                            println!("Failed to get league page {}, error: {}.", i, e);
-                            vec![]
-                        })
-                    )
-                    .map(|league_entry| Summoner {
-                        encrypted_summoner_id: league_entry.summoner_id,
-                        encrypted_account_id: None,
-                        league_id: league_entry.league_id.to_owned(), // Extra copy, sucks :)
-                        rank_tier: Some(league_entry.tier),
-                        games_per_day: None,
-                        ts: Some(ts),
-                    })
-                    // TODO: copy.
-                    .map(|summoner| (summoner.encrypted_summoner_id.clone(), summoner));
-                
-                let len_before = out.len();
-                out.extend(league_batch);
-
-                // No more data came.
-                if len_before == out.len() {
-                    break 'batchloop;
+                for (i, league_entries) in league_batch.into_iter().enumerate() {
+                    match league_entries {
+                        Err(e) => {
+                            println!("Failed to get league page {}, error: {}, retries: {}, response {:?}.",
+                                page - 10 + i, e.source_reqwest_error(), e.retries(), e.response());
+                        },
+                        Ok(league_entries) => {
+                            if 0 == league_entries.len() {
+                                println!("{} {} DONE. <{} pages.", tier, division, page - 1);
+                                break 'batchloop;
+                            };
+                            let summoners_by_id = league_entries
+                                .into_iter()
+                                .map(|league_entry| (
+                                    league_entry.summoner_id,
+                                    league_entry.tier, //league_entry.rank),
+                                ));
+                                // .map(|league_entry| Summoner {
+                                //     encrypted_summoner_id: league_entry.summoner_id,
+                                //     encrypted_account_id: None,
+                                //     league_id: league_entry.league_id.to_owned(), // Extra copy, sucks :)
+                                //     rank_tier: Some(league_entry.tier),
+                                //     games_per_day: None,
+                                //     ts: Some(ts),
+                                // })
+                                // .map(|summoner| (summoner.encrypted_summoner_id.clone(), summoner));
+                            out.extend(summoners_by_id);
+                        },
+                    };
                 };
             };
         };

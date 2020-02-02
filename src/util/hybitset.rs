@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize, Serializer };
+use serde::{ Deserialize, Serialize, Deserializer, Serializer };
 
 const SEGMENT_BYTE_LEN: usize = 1024;
 const BITS_PER_BYTE:    usize = 8;
@@ -62,7 +62,19 @@ impl Serialize for Segment {
     }
 }
 
-#[derive(Serialize)]//, Deserialize)]
+impl<'de> Deserialize<'de> for Segment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut arr: [u8; SEGMENT_BYTE_LEN] = [0; SEGMENT_BYTE_LEN];
+        base64::decode_config_slice(<&str>::deserialize(deserializer)?, base64::STANDARD, &mut arr as &mut [u8])
+            .map_err(serde::de::Error::custom)?;
+        Ok(Segment(arr))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct HyBitSet {
     len: usize,
     segment_byte_len: usize,

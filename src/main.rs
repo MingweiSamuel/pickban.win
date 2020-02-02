@@ -43,7 +43,15 @@
 //     +----------------------------+      +-------------------------+
 //
 //
+// Things stored in summoner.csv.gz:
+// - Everything (in case rate limits get tightened)
 //
+// Ranks (which are need) are pulled in their entirety each run.
+//
+//
+
+#![deny(unused_variables)]
+#![deny(unused_must_use)]
 
 #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate tokio;
@@ -58,21 +66,36 @@ use std::error::Error;
 
 use chrono::{ Duration };
 use chrono::offset::Utc;
-use futures::future::join_all;
+// use futures::future::join_all;
 // use itertools::Itertools;
-use riven::RiotApi;
+use riven::{ RiotApi, RiotApiConfig };
 use riven::consts::{ Region, Queue, QueueType };
 use tokio::task;
 
 use model::summoner::Summoner;
-use pipeline::source;
+use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
 
 
 lazy_static! {
     static ref RIOT_API: RiotApi =
-        RiotApi::with_key(include_str!("apikey.txt").trim());
+        RiotApi::with_config(
+            RiotApiConfig::with_key(include_str!("apikey.txt").trim())
+                .preconfig_throughput());
+}
+
+
+pub fn dyn_err<E: Error + Send + 'static>(e: E) -> Box<dyn Error + Send> {
+    Box::new(e)
+}
+
+pub fn distance<T: std::ops::Sub<Output = T> + Ord>(x: T, y: T) -> T {
+    if x < y {
+        y - x
+    } else {
+        x - y
+    }
 }
 
 
@@ -88,19 +111,20 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let starttime = Utc::now() - lookbehind;
     let pagination_batch_size: usize = 10;
 
-    // Unlike normal futures, this starts immediately (it seems).
     // Match bitset.
-    let match_hbs = task::spawn_blocking(
-        move || source::get_match_hybitset(region, starttime));
+    let match_hbs = tokio::spawn(
+        pipeline::hybitset::read_match_hybitset(region));
     // Oldest (or selected) summoners, for updating.
+    // Unlike normal futures, this starts automatically (it seems).
     let oldest_summoners = task::spawn_blocking(
-        move || source::get_oldest_summoners(region, update_size));
+        move || source_fs::get_oldest_summoners(region, update_size));
     // All ranked summoners.
     let ranked_summoners = tokio::spawn(
         source_api::get_ranked_summoners(&RIOT_API, queue_type, region, pagination_batch_size));
 
     // Join match bitset and oldest selected summoners.
-    let (mut match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
+    let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
+    let mut match_hbs = match_hbs.map_err(|e| e as Box<dyn Error>)?;
     let oldest_summoners = oldest_summoners?.collect::<Vec<Summoner>>();
 
     // Get new match IDs via matchlist.
@@ -110,7 +134,9 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let new_match_ids = mapping_api::get_new_matchids(
         &RIOT_API, region, queue, 20, starttime, &oldest_summoners, &mut match_hbs).await;
 
-    println!("new_match_ids len: {}.", new_match_ids.len());
+    println!("!! new_match_ids len: {}.", new_match_ids.len());
+
+    let write_match_hbs = pipeline::hybitset::write_match_hybitset(region, &match_hbs);
 
     // Get new match values.
     // TODO: this should stream (?).
@@ -123,15 +149,16 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
 
     println!("HBS len: {}.", match_hbs.len());
     println!("HBS density: {}.", match_hbs.density());
-    // let j = serde_json::to_string(&match_hbs)?;
-    // println!("HBS:\n{}.", j);
 
     let mut i: u32 = 0;
     for matche in new_matches {
-        println!("Match: {}.", matche.game_id);
+        let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
+            .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
+        println!("Match: {}, tier: {:?}.", matche.game_id, avg_tier);
         for participant in matche.participant_identities {
-            println!("Participant name: {}.", participant.player.summoner_name);
-            println!("Participant tier: {:?}.", ranked_summoners.get(&participant.player.summoner_id).map(|s| s.rank_tier));
+            println!("Participant name: {}, tier: {:?}.",
+                participant.player.summoner_name,
+                ranked_summoners.get(&participant.player.summoner_id));
         }
         println!();
         i += 1;
@@ -139,65 +166,19 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
             break;
         };
     };
+    // TODO update summoners here.
+
+    // // Write summoners job.
+    // let write_summoners = task::spawn_blocking(
+    //     move || source_fs::write_summoners(region, ranked_summoners.values()));
+
+    // Join not needed since both are already started.
+    // write_summoners.await??;
+    write_match_hbs.await?;
 
     println!("Done.");
     Ok(())
 }
-
-// pub fn run() -> Result<(), Box<dyn Error>> {
-
-//     let region = Region::NA;
-//     let encrypted_summoner_id = "kGi6nGk-fB1OYuXKHh9sZTgGXwicDSc_4PdniwBq8OoTSEeM";
-
-//     // Create RiotApi instance from key string.
-//     let api_key = include_str!("apikey.txt");
-//     let api = RiotApi::with_key(api_key);
-//     let api = &api;
-
-//     let lookbehind = Duration::days(3);
-//     let earliest = Utc::now() - lookbehind;
-
-//     println!("Earliest: {}.", earliest.timestamp_millis());
-
-//     let path_match_out: PathBuf = [
-//         "data",
-//         &format!("{:?}", Region::NA).to_lowercase(),
-//         &format!("match.{}.csv.gz", time::datetimestamp()),
-//     ].iter().collect();
-
-//     println!("{:?}", path_match_out);
-//     let mut match_entries_out = util::csvgz::writer(path_match_out).expect("Failed to write.");
-//     {
-//         let mut rt = tokio::runtime::Runtime::new().unwrap();
-//         rt.block_on(async {
-//             let summoner = api.summoner_v4().get_by_summoner_id(region, &encrypted_summoner_id);
-//             let summoner = summoner.await.expect("Failed to get summoner.");
-
-//             let matches = api.match_v4().get_matchlist(region, &summoner.account_id,
-//                 Some(earliest.timestamp_millis()), // begin_time
-//                 None, // begin_index
-//                 None, // champion
-//                 None, // end_time
-//                 None, // end_index
-//                 Some(vec![ Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES ]), // queue
-//                 None, // season
-//             );
-//             let match_dto = matches.await.expect("Failed to get matchlist.").expect("Matchlist 404.");
-
-//             for match_api in match_dto.matches {
-//                 let match_model = Match {
-//                     match_id: match_api.game_id as u64,
-//                     rank_tier: Tier::CHALLENGER,
-//                     ts: match_api.timestamp as u64,
-//                 };
-//                 match_entries_out.serialize(match_model).expect("Failed to serialize match.");
-//             }
-//         });
-//     }
-//     match_entries_out.flush().unwrap();
-
-//     Ok(())
-// }
 
 pub fn main() {
     let mut rt = tokio::runtime::Runtime::new().unwrap();

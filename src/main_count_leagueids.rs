@@ -23,7 +23,7 @@ use riven::consts::Tier;
 use tokio::task;
 
 use model::summoner::{ Summoner, SummonerOldest };
-use util::csv_find;
+use util::file_find;
 use util::csvgz;
 use pipeline::filter;
 use pipeline::source;
@@ -36,11 +36,11 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     // let lookbehind = Duration::hours(4);
     // let starttime = Utc::now() - lookbehind;
 
-    let summoner_path = csv_find::find_latest_csvgz(region, "summoner").expect("Failed to find latest csvgz");
+    let summoner_path = file_find::find_latest(region, "summoner", "csv.gz").expect("Failed to find latest csvgz");
     let mut summoner_reader = csvgz::reader(summoner_path)?;
     let league_ids = summoner_reader
         .deserialize()
-        .flat_map(|summoner| summoner.ok())
+        .filter_map(|summoner| summoner.ok())
         .map(|summoner: Summoner| summoner.league_id)
         .collect::<HashSet<String>>();
 

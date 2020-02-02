@@ -56,7 +56,8 @@ use model::summoner::Summoner;
 pub fn main() {
     println!("Hello, world!~");
 
-    let path_match = util::csv_find::find_latest_csvgz(Region::NA, "match").expect("Failed to find match .csv.gz");
+    let path_match = util::file_find::find_latest(Region::NA, "match", "csv.gz")
+        .expect("Failed to find match .csv.gz");
     let mut match_entries = util::csvgz::reader(path_match).expect("Failed to open match .csv.gz");
 
     for match_entry in match_entries.deserialize() {

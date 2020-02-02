@@ -73,7 +73,7 @@ pub fn main() {
 
     let path_match_out: PathBuf = [
         "data",
-        &format!("{:?}", Region::NA).to_lowercase(),
+        &format!("{:?}", region).to_lowercase(),
         &format!("summoner.{}.csv.gz", util::time::datetimestamp()),
     ].iter().collect();
     
