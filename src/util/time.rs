@@ -22,3 +22,7 @@ pub fn epoch_millis() -> u64 {
     let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("It's before 1970 lol.");
     dur.as_millis() as u64
 }
+
+pub fn naive_from_millis(millis: i64) -> NaiveDateTime {
+    NaiveDateTime::from_timestamp(millis / 1000, ((millis % 1000) as u32) * 1_000_000)
+}

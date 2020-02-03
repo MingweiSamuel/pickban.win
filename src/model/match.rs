@@ -1,6 +1,8 @@
 use serde::{Serialize, Deserialize};
 use riven::consts::Tier;
 
+use crate::util::time;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Match {
     pub match_id: u64,
@@ -8,21 +10,30 @@ pub struct Match {
     pub ts: u64,
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd)]
-pub struct MatchAggKey((u8, u8), chrono::DateTime<chrono::offset::Utc>, Tier);
 
-use chrono::DateTime;
-use chrono::naive::NaiveDateTime;
+use chrono::{ Datelike, DateTime };
+use chrono::naive::{ NaiveDateTime, IsoWeek };
 use chrono::offset::Utc;
 use riven::models::match_v4;
 
-impl MatchAggKey {
-    pub fn from_match_and_tier(matche: &match_v4::Match, tier: Tier) -> Self {
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct MatchFileKey {
+    pub version: (u8, u8),
+    pub iso_week: (i32, u32),
+    // pub tier: Tier,
+}
+
+impl From<&match_v4::Match> for MatchFileKey {
+    fn from(matche: &match_v4::Match) -> Self {
         let version = crate::util::lol::parse_version(&matche.game_version)
             .unwrap_or_else(|| panic!("Failed to parse game version: {}.", matche.game_version));
-        let ndt = NaiveDateTime::from_timestamp(
-            matche.game_creation / 1000, ((matche.game_creation % 1000) as u32) * 1_000_000);
+        let ndt = time::naive_from_millis(matche.game_creation);
         let dt = DateTime::<Utc>::from_utc(ndt, Utc);
-        Self(version, dt, tier)
+        let iw = dt.iso_week();
+        Self {
+            version: version,
+            iso_week: (iw.year(), iw.week()),
+            // tier: tier,
+        }
     }
 }

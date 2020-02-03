@@ -69,12 +69,13 @@ use std::error::Error;
 use chrono::{ Duration };
 use chrono::offset::Utc;
 // use futures::future::join_all;
-// use itertools::Itertools;
+use itertools::Itertools;
 use riven::{ RiotApi, RiotApiConfig };
 use riven::consts::{ Region, Queue, QueueType };
 use tokio::task;
 
 use model::summoner::Summoner;
+use model::r#match::MatchFileKey;
 use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
@@ -139,37 +140,12 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
 
     let new_match_ids = mapping_api::get_new_matchids(
         &RIOT_API, region, queue, 20, starttime, &oldest_summoners, &mut match_hbs).await;
-
+    // Updated summoners to update in CSV.
     let mut updated_summoners_by_id = oldest_summoners.into_iter()
         // TODO extra clone.
         .map(|summoner| { (summoner.encrypted_summoner_id.clone(), summoner) })
         .collect::<HashMap<_, _>>();
-
-    println!("!! new_match_ids len: {}.", new_match_ids.len());
-
-    let write_match_hbs = pipeline::hybitset::write_match_hybitset(region, &match_hbs);
-
-    // Get new match values.
-    // TODO: this should stream (?).
-    let new_matches = mapping_api::get_matches(
-        &RIOT_API, region, 20, new_match_ids);
-    let new_matches = new_matches.await;
-
-    // Completion of ranked_summoners map.
-    let ranked_summoners = ranked_summoners.await??;
-
-    println!("HBS len: {}.", match_hbs.len());
-    println!("HBS density: {}.", match_hbs.density());
-
-    // Handle matches
-    for matche in new_matches {
-        let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
-            .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
-        println!("Match: {}, tier: {:?}, ver: {}.", matche.game_id, avg_tier, matche.game_version);
-    };
-    // TODO update summoners here.
-
-
+    
     // Read back and update summoners.
     let write_summoners = {
         let all_summoners = task::spawn_blocking(
@@ -189,6 +165,46 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
         let write_summoners = task::spawn_blocking(
             move || source_fs::write_summoners(region, all_summoners));
         write_summoners
+    };
+
+    println!("!! new_match_ids len: {}.", new_match_ids.len());
+
+    let write_match_hbs = pipeline::hybitset::write_match_hybitset(region, &match_hbs);
+
+    // Get new match values.
+    // TODO: this should stream (?).
+    let new_matches = mapping_api::get_matches(
+        &RIOT_API, region, 20, new_match_ids);
+    let new_matches = new_matches.await;
+
+    // Completion of ranked_summoners map.
+    let ranked_summoners = ranked_summoners.await??;
+
+    println!("HBS len: {}.", match_hbs.len());
+    println!("HBS density: {}.", match_hbs.density());
+
+    // Handle matches.
+    // Matches grouped by their file key for convenient access.
+    let grouped_new_matches = new_matches.into_iter()
+        // .filter_map(|matche| {
+        //     let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
+        //         .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
+        //     avg_tier.map(|tier| MatchFileKey::from(&matche, tier))
+        //         .map(|key| (key, matche))
+        // })
+        .map(|matche| (MatchFileKey::from(&matche), matche))
+        .into_group_map();
+
+    for (match_key, matches) in grouped_new_matches {
+        let version = match_key.version;
+        // let tier = match_key.tier;
+        let iso_week = match_key.iso_week;
+        println!("Version: {:?}, Iso Week: {}-W{}.", version, iso_week.0, iso_week.1);
+        for matche in &matches {
+            let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
+                .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
+            println!("    {} ({:?})", matche.game_id, avg_tier);
+        }
     };
 
     // Join not needed since both are already started.
