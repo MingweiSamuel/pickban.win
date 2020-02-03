@@ -50,7 +50,7 @@
 //
 //
 
-#![deny(unused_variables)]
+// #![deny(unused_variables)]
 #![deny(unused_must_use)]
 
 #[macro_use] extern crate lazy_static;
@@ -62,6 +62,8 @@ mod model;
 mod pipeline;
 
 use std::vec::Vec;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::error::Error;
 
 use chrono::{ Duration };
@@ -76,6 +78,7 @@ use model::summoner::Summoner;
 use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
+use util::time;
 
 
 lazy_static! {
@@ -106,8 +109,8 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let queue_type = QueueType::RANKED_SOLO_5x5;
     let queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
-    let update_size: usize = 500;
-    let lookbehind = Duration::days(3);
+    let update_size: usize = 10;
+    let lookbehind = Duration::weeks(2);
     let starttime = Utc::now() - lookbehind;
     let pagination_batch_size: usize = 10;
 
@@ -119,8 +122,10 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let oldest_summoners = task::spawn_blocking(
         move || source_fs::get_oldest_summoners(region, update_size));
     // All ranked summoners.
-    let ranked_summoners = tokio::spawn(
-        source_api::get_ranked_summoners(&RIOT_API, queue_type, region, pagination_batch_size));
+    // let ranked_summoners = tokio::spawn(
+    //     source_api::get_ranked_summoners(&RIOT_API, queue_type, region, pagination_batch_size));
+    let ranked_summoners = task::spawn_blocking(
+        move || source_fs::get_ranked_summoners(region));
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
@@ -130,9 +135,15 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     // Get new match IDs via matchlist.
     let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
         &RIOT_API, region, 20, oldest_summoners).await;
+    let update_summoner_ts: u64 = time::epoch_millis();
 
     let new_match_ids = mapping_api::get_new_matchids(
         &RIOT_API, region, queue, 20, starttime, &oldest_summoners, &mut match_hbs).await;
+
+    let mut updated_summoners_by_id = oldest_summoners.into_iter()
+        // TODO extra clone.
+        .map(|summoner| { (summoner.encrypted_summoner_id.clone(), summoner) })
+        .collect::<HashMap<_, _>>();
 
     println!("!! new_match_ids len: {}.", new_match_ids.len());
 
@@ -145,43 +156,40 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let new_matches = new_matches.await;
 
     // Completion of ranked_summoners map.
-    let ranked_summoners = ranked_summoners.await?;
+    let ranked_summoners = ranked_summoners.await??;
 
     println!("HBS len: {}.", match_hbs.len());
     println!("HBS density: {}.", match_hbs.density());
 
-    let mut i: u32 = 0;
+    // Handle matches
     for matche in new_matches {
         let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
             .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
-        println!("Match: {}, tier: {:?}.", matche.game_id, avg_tier);
-        for participant in matche.participant_identities {
-            println!("Participant name: {}, tier: {:?}.",
-                participant.player.summoner_name,
-                ranked_summoners.get(&participant.player.summoner_id));
-        }
-        println!();
-        i += 1;
-        if i > 10 {
-            break;
-        };
+        println!("Match: {}, tier: {:?}, ver: {}.", matche.game_id, avg_tier, matche.game_version);
     };
     // TODO update summoners here.
 
 
     // Read back and update summoners.
-    let all_summoners = task::spawn_blocking(
-        move || source_fs::get_all_summoners(region));
-    let all_summoners = all_summoners.await??;
-    // TODO TEMP. Remove timestamps.
-    let all_summoners = all_summoners.map(|mut summoner| {
-        summoner.ts = None;
-        summoner
-    });
+    let write_summoners = {
+        let all_summoners = task::spawn_blocking(
+            move || source_fs::get_all_summoners(region));
+        let all_summoners = all_summoners.await??;
+        // Set timestamps on updated summoner.
+        let all_summoners = all_summoners.map(move |mut summoner| {
+            if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
+                summoner.ts = Some(update_summoner_ts);
+                summoner.encrypted_account_id = updated_summoner.encrypted_account_id;
+                // TODO update any other things.
+            }
+            summoner
+        });
 
-    // Write summoners job.
-    let write_summoners = task::spawn_blocking(
-        move || source_fs::write_summoners(region, all_summoners));
+        // Write summoners job.
+        let write_summoners = task::spawn_blocking(
+            move || source_fs::write_summoners(region, all_summoners));
+        write_summoners
+    };
 
     // Join not needed since both are already started.
     write_summoners.await??;

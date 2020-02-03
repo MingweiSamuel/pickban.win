@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::offset::Utc;
 use riven::consts::Region;
+use riven::consts::Tier;
 
 use crate::util::hybitset::HyBitSet;
 use crate::util::csvgz;
@@ -44,6 +46,19 @@ pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Resu
 
     let oldest_summoners = filter::filter_min_n(update_size, summoner_reader);
     Ok(oldest_summoners.into_iter().map(|s| s.0))
+}
+
+pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, Tier>> {
+    
+    let mut out = HashMap::new();
+
+    for summoner in get_all_summoners(region)? {
+        if let Some(tier) = summoner.rank_tier {
+            out.insert(summoner.encrypted_summoner_id, tier);
+        }
+    }
+
+    Ok(out)
 }
 
 pub fn write_summoners(region: Region, summoners: impl Iterator<Item = Summoner>) -> std::io::Result<()> {

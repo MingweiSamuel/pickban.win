@@ -14,8 +14,9 @@ pub struct Summoner {
 pub struct SummonerOldest(pub Summoner);
 impl Ord for SummonerOldest {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Sort by timestamp, then by summoner id (to give some randomness).
-        (self.0.ts, &self.0.encrypted_summoner_id).cmp(&(other.0.ts, &other.0.encrypted_summoner_id))
+        self.0.ts.cmp(&other.0.ts)
+        // // Sort by timestamp, then by summoner id (to give some randomness).
+        // (self.0.ts, &self.0.encrypted_summoner_id).cmp(&(other.0.ts, &other.0.encrypted_summoner_id))
     }
 }
 impl PartialOrd for SummonerOldest {

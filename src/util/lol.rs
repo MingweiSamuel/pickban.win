@@ -23,6 +23,15 @@ pub fn match_avg_tier<'a, I: Iterator<Item = Option<&'a Tier>>>(tiers: I) -> Opt
     Some(tier_nearest)
 }
 
+pub fn parse_version(version: &str) -> Option<(u8, u8)> {
+    let mut split = version.split('.');
+    split.next()
+        .and_then(|a| a.parse::<u8>().ok())
+        .and_then(|a| split.next()
+            .and_then(|b| b.parse::<u8>().ok())
+            .map(|b| (a, b)))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -31,5 +40,14 @@ mod test {
     fn test_round_up() {
         let x = [ Some(&Tier::CHALLENGER), Some(&Tier::GRANDMASTER) ];
         assert_eq!(Some(Tier::CHALLENGER), match_avg_tier(x.iter().cloned()));
+    }
+
+    #[test]
+    fn test_parse_version() {
+        assert_eq!(Some((10, 1)), parse_version("10.1.303.9385"));
+        assert_eq!(Some((10, 2)), parse_version("10.2.305.4739"));
+        assert_eq!(Some((10, 2)), parse_version("10.2"));
+        assert_eq!(None,          parse_version("10."));
+        assert_eq!(None,          parse_version(""));
     }
 }
