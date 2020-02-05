@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::path::PathBuf;
 
 use chrono::{ DateTime, Duration };
@@ -7,6 +8,7 @@ use glob::MatchOptions;
 
 use riven::consts::Region;
 
+use crate::dyn_err;
 use crate::util;
 
 lazy_static! {
@@ -18,17 +20,17 @@ lazy_static! {
 }
 
 // TODO: really need to distinguish between "no files found" and "it fucked up".
-pub fn find_latest(region: Region, name: &str, ext: &str) -> Option<PathBuf> {
+pub fn find_latest(region: Region, name: &str, ext: &str) -> Result<Option<PathBuf>, glob::GlobError> {
 
     let mut latest: Option<PathBuf> = None;
     let pattern = format!("data/{}/{}.*.{}", format!("{:?}", region).to_lowercase(), name, ext);
-    for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("Bad glob.") {
-        let entry = Some(entry.ok()?);
+    for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("bad glob") {
+        let entry = Some(entry?);
         if entry > latest {
             latest = entry;
         };
     };
-    latest
+    Ok(latest)
 }
 
 pub fn find_after_datetime(region: Region, name: &str, ext: &str, starttime: DateTime<Utc>) -> Vec<PathBuf> {

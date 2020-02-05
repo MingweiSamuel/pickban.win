@@ -30,31 +30,41 @@ pub fn get_match_hybitset(region: Region, starttime: DateTime<Utc>) -> HyBitSet 
 }
 
 #[allow(dead_code)]
-pub fn get_all_summoners(region: Region) -> Result<impl Iterator<Item = Summoner>, std::io::Error> {
+pub fn get_all_summoners(region: Region) -> std::io::Result<Option<impl Iterator<Item = Summoner>>> {
     let summoner_path = file_find::find_latest(region, "summoner", "csv.gz")
         .expect("Failed to find latest csvgz");
-    let summoner_reader = csvgz::reader(summoner_path)?
-        .into_deserialize()
-        .map(|summoner_res| summoner_res.expect("Failed to parse summoner."));
-    Ok(summoner_reader)
+    match summoner_path {
+        None => Ok(None),
+        Some(summoner_path) => {
+            let summoner_reader = csvgz::reader(summoner_path)?
+                .into_deserialize()
+                .map(|summoner_res| summoner_res.expect("Failed to parse summoner."));
+            Ok(Some(summoner_reader))
+        },
+    }
 }
 
 #[allow(dead_code)]
-pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Result<impl Iterator<Item = Summoner>> {
-    let summoner_reader = get_all_summoners(region)?
-        .map(SummonerOldest);
+pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Result<Option<impl Iterator<Item = Summoner>>> {
+    let summoner_reader = get_all_summoners(region)?;
 
-    let oldest_summoners = filter::filter_min_n(update_size, summoner_reader);
-    Ok(oldest_summoners.into_iter().map(|s| s.0))
+    Ok(summoner_reader.map(|summoner_reader| {
+        let summoner_reader = summoner_reader.map(SummonerOldest);
+
+        let oldest_summoners = filter::filter_min_n(update_size, summoner_reader);
+        oldest_summoners.into_iter().map(|s| s.0)
+    }))
 }
 
 pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, Tier>> {
     
     let mut out = HashMap::new();
 
-    for summoner in get_all_summoners(region)? {
-        if let Some(tier) = summoner.rank_tier {
-            out.insert(summoner.encrypted_summoner_id, tier);
+    if let Some(summoners) = get_all_summoners(region)? {
+        for summoner in summoners {
+            if let Some(tier) = summoner.rank_tier {
+                out.insert(summoner.encrypted_summoner_id, tier);
+            }
         }
     }
 

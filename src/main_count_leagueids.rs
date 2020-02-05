@@ -36,7 +36,9 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     // let lookbehind = Duration::hours(4);
     // let starttime = Utc::now() - lookbehind;
 
-    let summoner_path = file_find::find_latest(region, "summoner", "csv.gz").expect("Failed to find latest csvgz");
+    let summoner_path = file_find::find_latest(region, "summoner", "csv.gz")
+        .expect("Error finding latest csvgz.")
+        .expect("No csvgz found.");
     let mut summoner_reader = csvgz::reader(summoner_path)?;
     let league_ids = summoner_reader
         .deserialize()

@@ -18,6 +18,7 @@ const FILE_EXT: &'static str = "json";
 pub async fn read_match_hybitset(region: Region) -> Result<HyBitSet, Box<dyn Error + Send>> {
     
     let path = file_find::find_latest(region, FILE_TAG, FILE_EXT)
+        .map_err(dyn_err)?
         .ok_or(dyn_err(PbwError::new("Failed to find match file.".to_owned())))?;
 
     let mut file = File::open(path).await.map_err(dyn_err)?;

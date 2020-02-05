@@ -57,7 +57,8 @@ pub fn main() {
     println!("Hello, world!~");
 
     let path_match = util::file_find::find_latest(Region::NA, "match", "csv.gz")
-        .expect("Failed to find match .csv.gz");
+        .expect("Failed to find match .csv.gz")
+        .expect("No .csv.gz found.");
     let mut match_entries = util::csvgz::reader(path_match).expect("Failed to open match .csv.gz");
 
     for match_entry in match_entries.deserialize() {

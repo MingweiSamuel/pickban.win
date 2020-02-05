@@ -72,7 +72,7 @@ use chrono::offset::Utc;
 use futures::future::join_all;
 use itertools::Itertools;
 use riven::{ RiotApi, RiotApiConfig };
-use riven::consts::{ Region, Queue, QueueType };
+use riven::consts::{ Region, Tier, Queue, QueueType };
 use tokio::fs;
 use tokio::task;
 
@@ -105,17 +105,40 @@ pub fn distance<T: std::ops::Sub<Output = T> + Ord>(x: T, y: T) -> T {
 }
 
 
-async fn main_async() -> Result<(), Box<dyn Error>> {
-    println!("Hello world");
+const QUEUE_TYPE: QueueType = QueueType::RANKED_SOLO_5x5;
+const QUEUE: Queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
-    let region = Region::NA;
-    let queue_type = QueueType::RANKED_SOLO_5x5;
-    let queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
+
+async fn get_ranked_summoners(region: Region, pull_ranks: bool)
+    -> Result<HashMap<String, Tier>, Box<dyn Error + Send>>
+{
+    let pagination_batch_size: usize = 10;
+    if pull_ranks {
+        let future = tokio::spawn(source_api::get_ranked_summoners(
+            &RIOT_API, QUEUE_TYPE, region, pagination_batch_size));
+        let hashmap = future.await.map_err(dyn_err)?;
+        Ok(hashmap)
+    } else {
+        let future = task::spawn_blocking(move || source_fs::get_ranked_summoners(region));
+        let hashmap = future.await
+            .map_err(dyn_err)?
+            .map_err(dyn_err)?;
+        Ok(hashmap)
+    }
+}
+
+
+async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Result<(), Box<dyn Error>> {
+    println!("Updating {} in region {:?}", update_size, region);
+    if pull_ranks {
+        println!("Updating ranks from API.");
+    } else {
+        println!("Using stored ranks.");
+    }
 
     let update_size: usize = 5000;
     let lookbehind = Duration::weeks(1);
     let starttime = Utc::now() - lookbehind;
-    let pagination_batch_size: usize = 10;
 
     let path_data = {
         let mut path_data = PathBuf::new();
@@ -133,15 +156,19 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let oldest_summoners = task::spawn_blocking(
         move || source_fs::get_oldest_summoners(region, update_size));
     // All ranked summoners.
-    // let ranked_summoners = tokio::spawn(
-    //     source_api::get_ranked_summoners(&RIOT_API, queue_type, region, pagination_batch_size));
-    let ranked_summoners = task::spawn_blocking(
-        move || source_fs::get_ranked_summoners(region));
+    let ranked_summoners = get_ranked_summoners(region, pull_ranks);
+        // if pull_ranks {
+        //     let task = tokio::spawn(source_api::get_ranked_summoners(
+        //         &RIOT_API, queue_type, region, pagination_batch_size))
+        // } else {
+        //     task::spawn_blocking(
+        //         move || source_fs::get_ranked_summoners(region))
+        // };
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
     let mut match_hbs = match_hbs.map_err(|e| e as Box<dyn Error>)?;
-    let oldest_summoners = oldest_summoners?.collect::<Vec<Summoner>>();
+    let oldest_summoners = oldest_summoners?.expect("Summoner csvgz doesn't exist.").collect::<Vec<Summoner>>();
 
     // Get new match IDs via matchlist.
     let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
@@ -149,7 +176,7 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let update_summoner_ts: u64 = time::epoch_millis();
 
     let new_match_ids = mapping_api::get_new_matchids(
-        &RIOT_API, region, queue, 20, starttime, &oldest_summoners, &mut match_hbs).await;
+        &RIOT_API, region, QUEUE, 20, starttime, &oldest_summoners, &mut match_hbs).await;
     // Updated summoners to update in CSV.
     let mut updated_summoners_by_id = oldest_summoners.into_iter()
         // TODO extra clone.
@@ -160,7 +187,7 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let write_summoners = {
         let all_summoners = task::spawn_blocking(
             move || source_fs::get_all_summoners(region));
-        let all_summoners = all_summoners.await??;
+        let all_summoners = all_summoners.await??.expect("No summoner csvgz found (TODO).");
         // Set timestamps on updated summoner.
         let all_summoners = all_summoners.map(move |mut summoner| {
             if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
@@ -188,7 +215,8 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let new_matches = new_matches.await;
 
     // Completion of ranked_summoners map.
-    let ranked_summoners = ranked_summoners.await??;
+    let ranked_summoners = ranked_summoners.await
+        .map_err(|e| e as Box<dyn Error>)?;
 
     println!("HBS len: {}.", match_hbs.len());
     println!("HBS density: {}.", match_hbs.density());
@@ -247,7 +275,46 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
 }
 
 pub fn main() {
+    use clap::{ Arg, App };
+
+    let argparse = App::new("pickban.win script")
+        .version("0.1.0")
+        .about("Gets data from Riot API.")
+        .arg(Arg::with_name("region")
+            .short("r")
+            .long("region")
+            .takes_value(true)
+            .default_value("NA")
+            .help("Region to run on."))
+        .arg(Arg::with_name("update size")
+            .short("n")
+            .long("update-size")
+            .takes_value(true)
+            .default_value("100")
+            .help("Number of summoners to update."))
+        .arg(Arg::with_name("pull ranks")
+            .short("pr")
+            .long("pull-ranks")
+            .takes_value(false))
+        .get_matches();
+
+    let region_str = argparse.value_of("region").unwrap();
+    let region: Region = region_str.parse()
+        .unwrap_or_else(|_e| {
+            println!("Unknown region: {}.", region_str);
+            std::process::exit(1);
+        });
+
+    let update_size_str = argparse.value_of("update size").unwrap();
+    let update_size: usize = update_size_str.parse()
+        .unwrap_or_else(|_e| {
+            println!("Invalid update size: {}.", update_size_str);
+            std::process::exit(1);
+        });
+
+    let pull_ranks = argparse.value_of("pull ranks").is_some();
+
     let mut rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(main_async())
+    rt.block_on(run_async(region, update_size, pull_ranks))
         .unwrap_or_else(|e| panic!("Failed to complete: {}", e));
 }
