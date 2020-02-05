@@ -98,7 +98,7 @@ pub fn write_summoners(region: Region, summoners: impl Iterator<Item = Summoner>
 }
 
 pub fn write_matches<'a, I: Iterator<Item = &'a Match>>(
-    dir: &PathBuf, iso_week_str: &str, region: Region, matches: I) -> std::io::Result<()>
+    dir: &PathBuf, iso_week_str: &str, matches: I) -> std::io::Result<()>
 {
     let mut path = dir.clone();
     path.push(format!("matches.{}.csv.gz", iso_week_str));

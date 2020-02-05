@@ -231,7 +231,7 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
         // }
 
         let write_matches = task::spawn_blocking(
-            move || source_fs::write_matches(&path_data_key, &iso_week_str, region, model_matches.iter()));
+            move || source_fs::write_matches(&path_data_key, &iso_week_str, model_matches.iter()));
         write_matches_tasks.push(write_matches);
     };
 
