@@ -1,21 +1,13 @@
 use std::fs::{ File, OpenOptions };
-use std::io::Error;
 use std::path::Path;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 
-#[allow(dead_code)]
-pub fn writer<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, Error> {
-    let file    = File::create(path)?;
-    let encoder = GzEncoder::new(file, Compression::default());
-    let writer  = csv::Writer::from_writer(encoder);
-    Ok(writer)
-}
 
 #[allow(dead_code)]
-pub fn reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, Error> {
+pub fn reader<P: AsRef<Path>>(path: P) -> std::io::Result<csv::Reader<GzDecoder<File>>> {
     let file    = File::open(path)?;
     let decoder = GzDecoder::new(file);
     let reader  = csv::Reader::from_reader(decoder);
@@ -23,7 +15,23 @@ pub fn reader<P: AsRef<Path>>(path: P) -> Result<csv::Reader<GzDecoder<File>>, E
 }
 
 #[allow(dead_code)]
-pub fn appender<P: AsRef<Path>>(path: P) -> Result<csv::Writer<GzEncoder<File>>, Error> {
+pub fn writer_or_appender<P: AsRef<Path>>(path: P) -> std::io::Result<csv::Writer<GzEncoder<File>>> {
+    if path.as_ref().exists() {
+        appender(path)
+    }
+    else {
+        writer(path)
+    }
+}
+
+pub fn writer<P: AsRef<Path>>(path: P) -> std::io::Result<csv::Writer<GzEncoder<File>>> {
+    let file    = File::create(path)?;
+    let encoder = GzEncoder::new(file, Compression::default());
+    let writer  = csv::Writer::from_writer(encoder);
+    Ok(writer)
+}
+
+pub fn appender<P: AsRef<Path>>(path: P) -> std::io::Result<csv::Writer<GzEncoder<File>>> {
     let file    = OpenOptions::new().write(true).append(true).open(path)?;
     let encoder = GzEncoder::new(file, Compression::default());
     let writer  = csv::WriterBuilder::new()

@@ -87,7 +87,8 @@ pub async fn get_matches(
 
         let matches = join_all(chunk_futures).await;
         let matches = matches.into_iter()
-            .map(|m| m.expect("Failed to get matchlist.").expect("Match not found."));
+            .filter_map(|m| m.ok()) // Remove errors (TODO: silent).
+            .filter_map(|m| m); // Remove 404 (TODO: silent).
 
         matches_out.extend(matches);
     }

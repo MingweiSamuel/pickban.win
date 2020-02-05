@@ -96,3 +96,18 @@ pub fn write_summoners(region: Region, summoners: impl Iterator<Item = Summoner>
 
     Ok(())
 }
+
+pub fn write_matches<'a, I: Iterator<Item = &'a Match>>(
+    dir: &PathBuf, iso_week_str: &str, region: Region, matches: I) -> std::io::Result<()>
+{
+    let mut path = dir.clone();
+    path.push(format!("matches.{}.csv.gz", iso_week_str));
+    let mut writer = csvgz::writer_or_appender(&path)
+        .unwrap_or_else(|e| panic!("Failed to make match writer: {:?}, {}", &path, e));
+    for matche in matches {
+        writer.serialize(matche)?;
+    }
+    writer.flush()?;
+
+    Ok(())
+}

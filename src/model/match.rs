@@ -6,7 +6,7 @@ use crate::util::time;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Match {
     pub match_id: u64,
-    pub rank_tier: Tier,
+    pub rank_tier: Option<Tier>,
     pub ts: u64,
 }
 

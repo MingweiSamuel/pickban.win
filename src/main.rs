@@ -61,21 +61,23 @@ mod util;
 mod model;
 mod pipeline;
 
-use std::vec::Vec;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::error::Error;
+use std::path::PathBuf;
+use std::vec::Vec;
 
 use chrono::{ Duration };
 use chrono::offset::Utc;
-// use futures::future::join_all;
+use futures::future::join_all;
 use itertools::Itertools;
 use riven::{ RiotApi, RiotApiConfig };
 use riven::consts::{ Region, Queue, QueueType };
+use tokio::fs;
 use tokio::task;
 
 use model::summoner::Summoner;
-use model::r#match::MatchFileKey;
+use model::r#match::{ MatchFileKey, Match };
 use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
@@ -110,10 +112,18 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     let queue_type = QueueType::RANKED_SOLO_5x5;
     let queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
-    let update_size: usize = 10;
-    let lookbehind = Duration::weeks(2);
+    let update_size: usize = 5000;
+    let lookbehind = Duration::weeks(1);
     let starttime = Utc::now() - lookbehind;
     let pagination_batch_size: usize = 10;
+
+    let path_data = {
+        let mut path_data = PathBuf::new();
+        path_data.push("data");
+        path_data.push(format!("{:?}", region).to_lowercase());
+        path_data
+    };
+    fs::create_dir_all(&path_data).await?;
 
     // Match bitset.
     let match_hbs = tokio::spawn(
@@ -186,28 +196,49 @@ async fn main_async() -> Result<(), Box<dyn Error>> {
     // Handle matches.
     // Matches grouped by their file key for convenient access.
     let grouped_new_matches = new_matches.into_iter()
-        // .filter_map(|matche| {
-        //     let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
-        //         .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
-        //     avg_tier.map(|tier| MatchFileKey::from(&matche, tier))
-        //         .map(|key| (key, matche))
-        // })
         .map(|matche| (MatchFileKey::from(&matche), matche))
         .into_group_map();
 
+    let mut write_matches_tasks = Vec::with_capacity(grouped_new_matches.len());
+
     for (match_key, matches) in grouped_new_matches {
         let version = match_key.version;
-        // let tier = match_key.tier;
         let iso_week = match_key.iso_week;
-        println!("Version: {:?}, Iso Week: {}-W{}.", version, iso_week.0, iso_week.1);
-        for matche in &matches {
-            let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
-                .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
-            println!("    {} ({:?})", matche.game_id, avg_tier);
-        }
+
+        // Create directory (if not exists) for this patch.
+        let mut path_data_key = path_data.clone();
+        path_data_key.push(format!("{}.{}", version.0, version.1));
+        fs::create_dir_all(&path_data_key).await?;
+
+        let model_matches = matches.iter()
+            .map(|matche| {
+                let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
+                    .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
+                Match {
+                    match_id: matche.game_id as u64,
+                    rank_tier: avg_tier,
+                    ts: matche.game_creation as u64,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let iso_week_str = format!("{:04}-W{:02}", iso_week.0, iso_week.1);
+        // println!("Version: {:?}, Iso Week: {}.", version, iso_week_str);
+        // for matche in &matches {
+            
+        //     println!("    {} ({:?})", matche.game_id, avg_tier);
+        //     model_matches.push()
+        // }
+
+        let write_matches = task::spawn_blocking(
+            move || source_fs::write_matches(&path_data_key, &iso_week_str, region, model_matches.iter()));
+        write_matches_tasks.push(write_matches);
     };
 
     // Join not needed since both are already started.
+    for res in join_all(write_matches_tasks).await {
+        res??;
+    }
     write_summoners.await??;
     write_match_hbs.await?;
 
