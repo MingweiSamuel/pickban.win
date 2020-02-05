@@ -140,10 +140,19 @@ where
 
     match all_summoners {
         None => { // THERES NO SUMMONER .CSV.GZ TO READ FROM!
-            panic!("TODO");
-            // let write_summoners = task::spawn_blocking(
-            //     move || source_fs::write_summoners(region, all_summoners));
-            // write_summoners
+            assert!(updated_summoners_by_id.is_empty(), "all_summoners empty but updated_summoners_by_id not empty.");
+
+            let summoner_models = ranked_summoners.as_ref().iter()
+                .map(|(summoner_id, (tier, league_id))| Summoner {
+                    encrypted_summoner_id: summoner_id.clone(), // TODO extra clone.
+                    encrypted_account_id: None,
+                    league_id: Some(league_id.clone()), // TODO extra clone.
+                    rank_tier: Some(*tier),
+                    games_per_day: None,
+                    ts: None,
+                });
+
+            source_fs::write_summoners(region, summoner_models).map_err(dyn_err)?;
         },
         Some(all_summoners) => {
             // Set timestamps on updated summoner.
@@ -206,7 +215,10 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     let oldest_summoners: Vec<Summoner> = match oldest_summoners? {
         Some(x) => x.collect(),
         None => {
-            println!("!! No Summoner .csv.gz found. Use --pull-ranks to start new.");
+            if !pull_ranks {
+                println!("!! No Summoner .csv.gz found. Use --pull-ranks to start new.");
+                std::process::exit(2);
+            }
             vec![]
         },
     };
@@ -314,11 +326,9 @@ pub fn main() {
         .version("0.1.0")
         .about("Gets data from Riot API.")
         .arg(Arg::with_name("region")
-            .short("r")
-            .long("region")
             .takes_value(true)
-            .default_value("NA")
-            .help("Region to run on."))
+            .help("Region to run on.")
+            .index(1))
         .arg(Arg::with_name("update size")
             .short("n")
             .long("update-size")
@@ -326,7 +336,6 @@ pub fn main() {
             .default_value("100")
             .help("Number of summoners to update."))
         .arg(Arg::with_name("pull ranks")
-            .short("pr")
             .long("pull-ranks")
             .takes_value(false))
         .get_matches();
@@ -345,7 +354,7 @@ pub fn main() {
             std::process::exit(1);
         });
 
-    let pull_ranks = argparse.value_of("pull ranks").is_some();
+    let pull_ranks = argparse.is_present("pull ranks");
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(run_async(region, update_size, pull_ranks))
