@@ -10,7 +10,7 @@ use crate::util::time;
 
 #[allow(dead_code)]
 pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: Region, batch_size: usize)
-    -> HashMap<String, Tier>
+    -> HashMap<String, (Tier, String)>
 {    
     let mut out = HashMap::with_capacity(65_536);
 
@@ -45,17 +45,8 @@ pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: 
                             .into_iter()
                             .map(|league_entry| (
                                 league_entry.summoner_id,
-                                league_entry.tier, //league_entry.rank),
+                                (league_entry.tier, league_entry.league_id),
                             ));
-                            // .map(|league_entry| Summoner {
-                            //     encrypted_summoner_id: league_entry.summoner_id,
-                            //     encrypted_account_id: None,
-                            //     league_id: league_entry.league_id.to_owned(), // Extra copy, sucks :)
-                            //     rank_tier: Some(league_entry.tier),
-                            //     games_per_day: None,
-                            //     ts: Some(ts),
-                            // })
-                            // .map(|summoner| (summoner.encrypted_summoner_id.clone(), summoner));
                         out.extend(summoners_by_id);
                     },
                 };

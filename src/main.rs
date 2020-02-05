@@ -66,6 +66,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::vec::Vec;
+use std::sync::Arc;
 
 use chrono::{ Duration };
 use chrono::offset::Utc;
@@ -111,7 +112,7 @@ const QUEUE: Queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
 
 async fn get_ranked_summoners(region: Region, pull_ranks: bool)
-    -> Result<HashMap<String, Tier>, Box<dyn Error + Send>>
+    -> Result<HashMap<String, (Tier, String)>, Box<dyn Error + Send>>
 {
     let pagination_batch_size: usize = 10;
     if pull_ranks {
@@ -126,6 +127,46 @@ async fn get_ranked_summoners(region: Region, pull_ranks: bool)
             .map_err(dyn_err)?;
         Ok(hashmap)
     }
+}
+
+fn write_summoners<RS>(region: Region, update_summoner_ts: u64,
+    updated_summoners_by_id: &mut HashMap<String, Summoner>,
+    ranked_summoners: RS)
+    -> Result<(), Box<dyn Error + Send>>
+where
+    RS: AsRef<HashMap<String, (Tier, String)>>
+{
+    let all_summoners = source_fs::get_all_summoners(region).map_err(dyn_err)?;
+
+    match all_summoners {
+        None => { // THERES NO SUMMONER .CSV.GZ TO READ FROM!
+            panic!("TODO");
+            // let write_summoners = task::spawn_blocking(
+            //     move || source_fs::write_summoners(region, all_summoners));
+            // write_summoners
+        },
+        Some(all_summoners) => {
+            // Set timestamps on updated summoner.
+            let all_summoners = all_summoners.map(move |mut summoner| {
+                // Update timestamp and games per day (TODO).
+                if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
+                    summoner.ts = Some(update_summoner_ts);
+                    summoner.encrypted_account_id = updated_summoner.encrypted_account_id;
+                    // TODO update any other things.
+                }
+                // Update tiers.
+                if let Some((tier, league_id)) = ranked_summoners.as_ref().get(&summoner.encrypted_summoner_id) {
+                    summoner.rank_tier = Some(*tier);
+                    summoner.league_id = Some(league_id.clone()); // TODO bad copy.
+                }
+                summoner
+            });
+
+            // Write summoners job.
+            source_fs::write_summoners(region, all_summoners).map_err(dyn_err)?;
+        },
+    };
+    Ok(())
 }
 
 
@@ -157,19 +198,18 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         move || source_fs::get_oldest_summoners(region, update_size));
     // All ranked summoners.
     let ranked_summoners = get_ranked_summoners(region, pull_ranks);
-        // if pull_ranks {
-        //     let task = tokio::spawn(source_api::get_ranked_summoners(
-        //         &RIOT_API, queue_type, region, pagination_batch_size))
-        // } else {
-        //     task::spawn_blocking(
-        //         move || source_fs::get_ranked_summoners(region))
-        // };
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
     let match_hbs = match_hbs.map_err(|e| e as Box<dyn Error>)?;
     let mut match_hbs = match_hbs.unwrap_or_else(|| HyBitSet::new()); // Create new if none saved.
-    let oldest_summoners = oldest_summoners?.expect("Summoner csvgz doesn't exist.").collect::<Vec<Summoner>>();
+    let oldest_summoners: Vec<Summoner> = match oldest_summoners? {
+        Some(x) => x.collect(),
+        None => {
+            println!("!! No Summoner .csv.gz found. Use --pull-ranks to start new.");
+            vec![]
+        },
+    };
 
     // Get new match IDs via matchlist.
     let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
@@ -183,27 +223,6 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         // TODO extra clone.
         .map(|summoner| { (summoner.encrypted_summoner_id.clone(), summoner) })
         .collect::<HashMap<_, _>>();
-    
-    // Read back and update summoners.
-    let write_summoners = {
-        let all_summoners = task::spawn_blocking(
-            move || source_fs::get_all_summoners(region));
-        let all_summoners = all_summoners.await??.expect("No summoner csvgz found (TODO).");
-        // Set timestamps on updated summoner.
-        let all_summoners = all_summoners.map(move |mut summoner| {
-            if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
-                summoner.ts = Some(update_summoner_ts);
-                summoner.encrypted_account_id = updated_summoner.encrypted_account_id;
-                // TODO update any other things.
-            }
-            summoner
-        });
-
-        // Write summoners job.
-        let write_summoners = task::spawn_blocking(
-            move || source_fs::write_summoners(region, all_summoners));
-        write_summoners
-    };
 
     println!("!! new_match_ids len: {}.", new_match_ids.len());
 
@@ -218,9 +237,17 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     // Completion of ranked_summoners map.
     let ranked_summoners = ranked_summoners.await
         .map_err(|e| e as Box<dyn Error>)?;
+    let ranked_summoners = Arc::new(ranked_summoners);
 
     println!("HBS len: {}.", match_hbs.len());
     println!("HBS density: {}.", match_hbs.density());
+
+    // Read back and update summoners.
+    let write_summoners = {
+        let ranked_summoners = ranked_summoners.clone();
+        task::spawn_blocking(move ||
+            write_summoners(region, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
+    };
 
     // Handle matches.
     // Matches grouped by their file key for convenient access.
@@ -241,8 +268,13 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
         let model_matches = matches.iter()
             .map(|matche| {
-                let avg_tier = util::lol::match_avg_tier(matche.participant_identities.iter()
-                    .map(|participant| ranked_summoners.get(&participant.player.summoner_id)));
+                let tiers = matche.participant_identities.iter()
+                    .map(|participant| {
+                        ranked_summoners.get(&participant.player.summoner_id)
+                            .map(|(tier, _league_id)| tier)
+                            .cloned()
+                    });
+                let avg_tier = util::lol::match_avg_tier(tiers);
                 Match {
                     match_id: matche.game_id as u64,
                     rank_tier: avg_tier,
@@ -268,7 +300,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     for res in join_all(write_matches_tasks).await {
         res??;
     }
-    write_summoners.await??;
+    write_summoners.await?.map_err(|e| e as Box<dyn Error>)?;
     write_match_hbs.await?;
 
     println!("Done.");

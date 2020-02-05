@@ -56,14 +56,16 @@ pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Resu
     }))
 }
 
-pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, Tier>> {
+pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, (Tier, String)>> {
     
-    let mut out = HashMap::new();
+    let mut out = HashMap::with_capacity(65_536);
 
     if let Some(summoners) = get_all_summoners(region)? {
         for summoner in summoners {
             if let Some(tier) = summoner.rank_tier {
-                out.insert(summoner.encrypted_summoner_id, tier);
+                let league_id = summoner.league_id.expect("Summoner with tier but no league id.");
+                out.insert(summoner.encrypted_summoner_id,
+                    (tier, league_id));
             }
         }
     }

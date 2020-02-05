@@ -3,9 +3,9 @@ use std::convert::Into;
 use riven::consts::Tier;
 use riven::consts::IntoEnumIterator;
 
-pub fn match_avg_tier<'a, I: Iterator<Item = Option<&'a Tier>>>(tiers: I) -> Option<Tier> {
+pub fn match_avg_tier<I: Iterator<Item = Option<Tier>>>(tiers: I) -> Option<Tier> {
     let (sum, cnt) = tiers.filter_map(std::convert::identity)
-        .map(|tier| Into::<u8>::into(*tier) as u16)
+        .map(|tier| Into::<u8>::into(tier) as u16)
         .fold((0_u16, 0_u16), |(sum, cnt), x| (sum + x, cnt + 1));
     if 0 == cnt {
         return None;
