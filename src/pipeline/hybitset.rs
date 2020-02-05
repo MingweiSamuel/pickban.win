@@ -15,11 +15,14 @@ const FILE_TAG: &'static str = "match_hbs";
 const FILE_EXT: &'static str = "json";
 
 // TODO: really need to distinguish between "no files found" and "it fucked up".
-pub async fn read_match_hybitset(region: Region) -> Result<HyBitSet, Box<dyn Error + Send>> {
+pub async fn read_match_hybitset(region: Region) -> Result<Option<HyBitSet>, Box<dyn Error + Send>> {
     
-    let path = file_find::find_latest(region, FILE_TAG, FILE_EXT)
+    let path = match file_find::find_latest(region, FILE_TAG, FILE_EXT)
         .map_err(dyn_err)?
-        .ok_or(dyn_err(PbwError::new("Failed to find match file.".to_owned())))?;
+    {
+        Some(path) => path,
+        None => return Ok(None),
+    };
 
     let mut file = File::open(path).await.map_err(dyn_err)?;
     let mut bytes = vec![];

@@ -82,6 +82,7 @@ use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
 use util::time;
+use util::hybitset::HyBitSet;
 
 
 lazy_static! {
@@ -149,8 +150,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     fs::create_dir_all(&path_data).await?;
 
     // Match bitset.
-    let match_hbs = tokio::spawn(
-        pipeline::hybitset::read_match_hybitset(region));
+    let match_hbs = tokio::spawn(pipeline::hybitset::read_match_hybitset(region));
     // Oldest (or selected) summoners, for updating.
     // Unlike normal futures, this starts automatically (it seems).
     let oldest_summoners = task::spawn_blocking(
@@ -167,7 +167,8 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
-    let mut match_hbs = match_hbs.map_err(|e| e as Box<dyn Error>)?;
+    let match_hbs = match_hbs.map_err(|e| e as Box<dyn Error>)?;
+    let mut match_hbs = match_hbs.unwrap_or_else(|| HyBitSet::new()); // Create new if none saved.
     let oldest_summoners = oldest_summoners?.expect("Summoner csvgz doesn't exist.").collect::<Vec<Summoner>>();
 
     // Get new match IDs via matchlist.
