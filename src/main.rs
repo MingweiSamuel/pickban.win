@@ -61,10 +61,10 @@ mod util;
 mod model;
 mod pipeline;
 
-use std::collections::BTreeMap;
+// use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 use std::vec::Vec;
 use std::sync::Arc;
 
@@ -111,7 +111,7 @@ const QUEUE_TYPE: QueueType = QueueType::RANKED_SOLO_5x5;
 const QUEUE: Queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
 
-async fn get_ranked_summoners(region: Region, pull_ranks: bool)
+async fn get_ranked_summoners(region: Region, path_data_local: &PathBuf, pull_ranks: bool)
     -> Result<HashMap<String, (Tier, String)>, Box<dyn Error + Send>>
 {
     let pagination_batch_size: usize = 10;
@@ -121,7 +121,8 @@ async fn get_ranked_summoners(region: Region, pull_ranks: bool)
         let hashmap = future.await.map_err(dyn_err)?;
         Ok(hashmap)
     } else {
-        let future = task::spawn_blocking(move || source_fs::get_ranked_summoners(region));
+        let path_data_local = path_data_local.clone();
+        let future = task::spawn_blocking(move || source_fs::get_ranked_summoners(path_data_local));
         let hashmap = future.await
             .map_err(dyn_err)?
             .map_err(dyn_err)?;
@@ -129,14 +130,14 @@ async fn get_ranked_summoners(region: Region, pull_ranks: bool)
     }
 }
 
-fn write_summoners<RS>(region: Region, update_summoner_ts: u64,
+fn write_summoners<RS>(path: impl AsRef<Path>, update_summoner_ts: u64,
     updated_summoners_by_id: &mut HashMap<String, Summoner>,
     ranked_summoners: RS)
     -> Result<(), Box<dyn Error + Send>>
 where
     RS: AsRef<HashMap<String, (Tier, String)>>
 {
-    let all_summoners = source_fs::get_all_summoners(region).map_err(dyn_err)?;
+    let all_summoners = source_fs::get_all_summoners(&path).map_err(dyn_err)?;
 
     match all_summoners {
         None => { // THERES NO SUMMONER .CSV.GZ TO READ FROM!
@@ -152,7 +153,7 @@ where
                     ts: None,
                 });
 
-            source_fs::write_summoners(region, summoner_models).map_err(dyn_err)?;
+            source_fs::write_summoners(&path, summoner_models).map_err(dyn_err)?;
         },
         Some(all_summoners) => {
             // Set timestamps on updated summoner.
@@ -172,7 +173,7 @@ where
             });
 
             // Write summoners job.
-            source_fs::write_summoners(region, all_summoners).map_err(dyn_err)?;
+            source_fs::write_summoners(&path, all_summoners).map_err(dyn_err)?;
         },
     };
     Ok(())
@@ -190,22 +191,30 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     let lookbehind = Duration::weeks(1);
     let starttime = Utc::now() - lookbehind;
 
-    let path_data = {
-        let mut path_data = PathBuf::new();
-        path_data.push("data");
-        path_data.push(format!("{:?}", region).to_lowercase());
-        path_data
+    let path_data: PathBuf = [
+        "data",
+        &format!("{:?}", region).to_lowercase(),
+    ].iter().collect();
+
+    let path_data_local = {
+        let mut x = path_data.clone();
+        x.push("local");
+        x
     };
-    fs::create_dir_all(&path_data).await?;
+
+    fs::create_dir_all(&path_data_local).await?;
 
     // Match bitset.
-    let match_hbs = tokio::spawn(pipeline::hybitset::read_match_hybitset(region));
+    let match_hbs = tokio::spawn(pipeline::hybitset::read_match_hybitset(path_data_local.clone()));
     // Oldest (or selected) summoners, for updating.
     // Unlike normal futures, this starts automatically (it seems).
-    let oldest_summoners = task::spawn_blocking(
-        move || source_fs::get_oldest_summoners(region, update_size));
+    let oldest_summoners = {
+        let path_data_local = path_data_local.clone();
+        task::spawn_blocking(
+            move || source_fs::get_oldest_summoners(path_data_local, update_size))
+    };
     // All ranked summoners.
-    let ranked_summoners = get_ranked_summoners(region, pull_ranks);
+    let ranked_summoners = get_ranked_summoners(region, &path_data_local, pull_ranks);
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
@@ -239,7 +248,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         .map(|summoner| { (summoner.encrypted_summoner_id.clone(), summoner) })
         .collect::<HashMap<_, _>>();
 
-    let write_match_hbs = pipeline::hybitset::write_match_hybitset(region, &match_hbs);
+    let write_match_hbs = pipeline::hybitset::write_match_hybitset(&path_data_local, &match_hbs);
 
     // Get new match values.
     // TODO: this should stream (?).
@@ -258,8 +267,9 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     // Read back and update summoners.
     let write_summoners = {
         let ranked_summoners = ranked_summoners.clone();
+        let path_data_local = path_data_local.clone();
         task::spawn_blocking(move ||
-            write_summoners(region, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
+            write_summoners(path_data_local, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
     };
 
     // Handle matches.

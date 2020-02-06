@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 
 use chrono::DateTime;
 use chrono::offset::Utc;
@@ -14,11 +14,11 @@ use crate::model::r#match::Match;
 use crate::model::summoner::{ Summoner, SummonerOldest, SummonerHighestRanked };
 use super::filter;
 
-#[allow(dead_code)]
-pub fn get_match_hybitset(region: Region, starttime: DateTime<Utc>) -> HyBitSet {
+
+pub fn get_match_hybitset(path: impl AsRef<Path>, starttime: DateTime<Utc>) -> HyBitSet {
     let mut hbs = HyBitSet::new();
 
-    for path in file_find::find_after_datetime(region, "match", "tar.gz", starttime) {
+    for path in file_find::find_after_datetime(path, "match", "tar.gz", starttime) {
         let mut match_reader = csvgz::reader(path).expect("Failed to read.");
         for mat in match_reader.deserialize() {
             let mat: Match = mat.expect("Failed to deserialize match.");
@@ -30,8 +30,10 @@ pub fn get_match_hybitset(region: Region, starttime: DateTime<Utc>) -> HyBitSet 
 }
 
 #[allow(dead_code)]
-pub fn get_all_summoners(region: Region) -> std::io::Result<Option<impl Iterator<Item = Summoner>>> {
-    let summoner_path = file_find::find_latest(region, "summoner", "csv.gz")
+pub fn get_all_summoners(path: impl AsRef<Path>)
+    -> std::io::Result<Option<impl Iterator<Item = Summoner>>>
+{
+    let summoner_path = file_find::find_latest(path, "summoner", "csv.gz")
         .expect("Failed to find latest csvgz");
     match summoner_path {
         None => Ok(None),
@@ -45,8 +47,10 @@ pub fn get_all_summoners(region: Region) -> std::io::Result<Option<impl Iterator
 }
 
 #[allow(dead_code)]
-pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Result<Option<impl Iterator<Item = Summoner>>> {
-    let summoner_reader = get_all_summoners(region)?;
+pub fn get_oldest_summoners(path: impl AsRef<Path>, update_size: usize)
+    -> std::io::Result<Option<impl Iterator<Item = Summoner>>>
+{
+    let summoner_reader = get_all_summoners(path)?;
 
     Ok(summoner_reader.map(|summoner_reader| {
         let summoner_reader = summoner_reader.map(SummonerOldest);
@@ -56,11 +60,12 @@ pub fn get_oldest_summoners(region: Region, update_size: usize) -> std::io::Resu
     }))
 }
 
-pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, (Tier, String)>> {
-    
+pub fn get_ranked_summoners(path: impl AsRef<Path>)
+    -> std::io::Result<HashMap<String, (Tier, String)>>
+{
     let mut out = HashMap::with_capacity(65_536);
 
-    if let Some(summoners) = get_all_summoners(region)? {
+    if let Some(summoners) = get_all_summoners(path)? {
         for summoner in summoners {
             if let Some(tier) = summoner.rank_tier {
                 let league_id = summoner.league_id.expect("Summoner with tier but no league id.");
@@ -73,13 +78,14 @@ pub fn get_ranked_summoners(region: Region) -> std::io::Result<HashMap<String, (
     Ok(out)
 }
 
-pub fn write_summoners(region: Region, summoners: impl Iterator<Item = Summoner>) -> std::io::Result<()> {
+pub fn write_summoners(path: impl AsRef<Path>, summoners: impl Iterator<Item = Summoner>) -> std::io::Result<()> {
     
-    let path_match_out: PathBuf = [
-        "data",
-        &format!("{:?}", region).to_lowercase(),
-        &format!("summoner.{}.csv.gz", time::datetimestamp()),
-    ].iter().collect();
+    let path_match_out = path.as_ref().with_file_name(format!("summoner.{}.csv.gz", time::datetimestamp()));
+    // PathBuf = [
+    //     "data",
+    //     &format!("{:?}", region).to_lowercase(),
+    //     &format!("summoner.{}.csv.gz", time::datetimestamp()),
+    // ].iter().collect();
 
     let mut writer = csvgz::writer(path_match_out).expect("Failed to write xd.");
 

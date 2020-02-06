@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 use std::error::Error;
 
 use tokio::fs::{ File, OpenOptions };
@@ -15,9 +15,10 @@ const FILE_TAG: &'static str = "match_hbs";
 const FILE_EXT: &'static str = "json";
 
 // TODO: really need to distinguish between "no files found" and "it fucked up".
-pub async fn read_match_hybitset(region: Region) -> Result<Option<HyBitSet>, Box<dyn Error + Send>> {
-    
-    let path = match file_find::find_latest(region, FILE_TAG, FILE_EXT)
+pub async fn read_match_hybitset(path: impl AsRef<Path>)
+    -> Result<Option<HyBitSet>, Box<dyn Error + Send>>
+{
+    let path = match file_find::find_latest(path, FILE_TAG, FILE_EXT)
         .map_err(dyn_err)?
     {
         Some(path) => path,
@@ -32,13 +33,9 @@ pub async fn read_match_hybitset(region: Region) -> Result<Option<HyBitSet>, Box
     Ok(hbs)
 }
 
-pub async fn write_match_hybitset(region: Region, match_hbs: &HyBitSet) -> Result<(), Box<dyn Error>> {
+pub async fn write_match_hybitset(path: impl AsRef<Path>, match_hbs: &HyBitSet) -> Result<(), Box<dyn Error>> {
     
-    let path: PathBuf = [
-        "data",
-        &format!("{:?}", region).to_lowercase(),
-        &format!("{}.{}.{}", FILE_TAG, time::datetimestamp(), FILE_EXT),
-    ].iter().collect();
+    let path = path.as_ref().with_file_name(format!("{}.{}.{}", FILE_TAG, time::datetimestamp(), FILE_EXT));
 
     let mut file = OpenOptions::new()
         .write(true)

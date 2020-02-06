@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 
 use chrono::{ DateTime, Duration };
 use chrono::offset::Utc;
@@ -20,10 +20,13 @@ lazy_static! {
 }
 
 // TODO: really need to distinguish between "no files found" and "it fucked up".
-pub fn find_latest(region: Region, name: &str, ext: &str) -> Result<Option<PathBuf>, glob::GlobError> {
+pub fn find_latest(path: impl AsRef<Path>, name: &str, ext: &str) -> Result<Option<PathBuf>, glob::GlobError> {
 
     let mut latest: Option<PathBuf> = None;
-    let pattern = format!("data/{}/{}.*.{}", format!("{:?}", region).to_lowercase(), name, ext);
+    let pattern = format!("{}/{}.*.{}",
+        path.as_ref().to_str().expect("path has unicode"),
+        name, ext);
+
     for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("bad glob") {
         let entry = Some(entry?);
         if entry > latest {
@@ -33,10 +36,13 @@ pub fn find_latest(region: Region, name: &str, ext: &str) -> Result<Option<PathB
     Ok(latest)
 }
 
-pub fn find_after_datetime(region: Region, name: &str, ext: &str, starttime: DateTime<Utc>) -> Vec<PathBuf> {
+pub fn find_after_datetime(path: impl AsRef<Path>, name: &str, ext: &str, starttime: DateTime<Utc>) -> Vec<PathBuf> {
     
     let mut results: Vec<PathBuf> = vec![];
-    let pattern = format!("data/{}/{}.*.{}", format!("{:?}", region).to_lowercase(), name, ext);
+    let pattern = format!("{}/{}.*.{}",
+        path.as_ref().to_str().expect("path has unicode"),
+        name, ext);
+
     for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("Bad glob.") {
         if let Ok(entry) = entry {
             let filename = entry.file_name().expect("No filename.");
