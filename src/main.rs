@@ -187,7 +187,6 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         println!("Using stored ranks.");
     }
 
-    let update_size: usize = 5000;
     let lookbehind = Duration::weeks(1);
     let starttime = Utc::now() - lookbehind;
 
@@ -223,20 +222,22 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         },
     };
 
+    println!("Obtained oldest summoners, count: {}.", oldest_summoners.len());
+
     // Get new match IDs via matchlist.
     let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
         &RIOT_API, region, 20, oldest_summoners).await;
+    println!("Added missing account IDs, cound: {}.", oldest_summoners.len());
     let update_summoner_ts: u64 = time::epoch_millis();
 
     let new_match_ids = mapping_api::get_new_matchids(
         &RIOT_API, region, QUEUE, 20, starttime, &oldest_summoners, &mut match_hbs).await;
+    println!("New matches found: {}.", new_match_ids.len());
     // Updated summoners to update in CSV.
     let mut updated_summoners_by_id = oldest_summoners.into_iter()
         // TODO extra clone.
         .map(|summoner| { (summoner.encrypted_summoner_id.clone(), summoner) })
         .collect::<HashMap<_, _>>();
-
-    println!("!! new_match_ids len: {}.", new_match_ids.len());
 
     let write_match_hbs = pipeline::hybitset::write_match_hybitset(region, &match_hbs);
 
@@ -330,11 +331,9 @@ pub fn main() {
             .help("Region to run on.")
             .index(1))
         .arg(Arg::with_name("update size")
-            .short("n")
-            .long("update-size")
             .takes_value(true)
-            .default_value("100")
-            .help("Number of summoners to update."))
+            .help("Number of summoners to update.")
+            .index(2))
         .arg(Arg::with_name("pull ranks")
             .long("pull-ranks")
             .takes_value(false))
