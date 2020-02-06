@@ -35,7 +35,7 @@ pub async fn read_match_hybitset(path: impl AsRef<Path>)
 
 pub async fn write_match_hybitset(path: impl AsRef<Path>, match_hbs: &HyBitSet) -> Result<(), Box<dyn Error>> {
     
-    let path = path.as_ref().with_file_name(format!("{}.{}.{}", FILE_TAG, time::datetimestamp(), FILE_EXT));
+    let path = path.as_ref().join(format!("{}.{}.{}", FILE_TAG, time::datetimestamp(), FILE_EXT));
 
     let mut file = OpenOptions::new()
         .write(true)

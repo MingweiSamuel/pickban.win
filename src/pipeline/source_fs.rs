@@ -80,7 +80,7 @@ pub fn get_ranked_summoners(path: impl AsRef<Path>)
 
 pub fn write_summoners(path: impl AsRef<Path>, summoners: impl Iterator<Item = Summoner>) -> std::io::Result<()> {
     
-    let path_match_out = path.as_ref().with_file_name(format!("summoner.{}.csv.gz", time::datetimestamp()));
+    let path_match_out = path.as_ref().join(format!("summoner.{}.csv.gz", time::datetimestamp()));
     // PathBuf = [
     //     "data",
     //     &format!("{:?}", region).to_lowercase(),
