@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 
 use futures::future::join_all;
-use riven::consts::{ Region, Tier, Division, QueueType };
+use riven::consts::{ Region, Tier, QueueType };
 use riven::RiotApi;
-
-use crate::model::summoner::Summoner;
-use crate::util::time;
 
 
 #[allow(dead_code)]

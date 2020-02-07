@@ -54,17 +54,14 @@
 #![deny(unused_must_use)]
 
 #[macro_use] extern crate lazy_static;
-// #[macro_use] extern crate tokio;
-// #[macro_use] extern crate scan_fmt;
 
 mod util;
 mod model;
 mod pipeline;
 
-use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::{ Path, PathBuf };
+use std::path::{ PathBuf };
 use std::vec::Vec;
 use std::sync::Arc;
 
@@ -73,15 +70,14 @@ use chrono::offset::Utc;
 use futures::future::join_all;
 use itertools::Itertools;
 use riven::{ RiotApi, RiotApiConfig };
-use riven::consts::{ Region, Tier, Queue, QueueType };
+use riven::consts::{ Region, Queue, QueueType };
 use tokio::fs;
 use tokio::task;
 
 use model::summoner::Summoner;
 use model::r#match::{ MatchFileKey, Match };
-use model::league::League;
+use pipeline::basic;
 use pipeline::source_fs;
-use pipeline::source_api;
 use pipeline::mapping_api;
 use util::time;
 use util::hybitset::HyBitSet;
@@ -111,89 +107,6 @@ pub fn distance<T: std::ops::Sub<Output = T> + Ord>(x: T, y: T) -> T {
 const QUEUE_TYPE: QueueType = QueueType::RANKED_SOLO_5x5;
 const QUEUE: Queue = Queue::SUMMONERS_RIFT_5V5_RANKED_SOLO_GAMES;
 
-
-async fn get_ranked_summoners(region: Region, path_data_local: &PathBuf, pull_ranks: bool)
-    -> Result<HashMap<String, (Tier, String)>, Box<dyn Error + Send>>
-{
-    let pagination_batch_size: usize = 10;
-    if pull_ranks {
-        let future = tokio::spawn(source_api::get_ranked_summoners(
-            &RIOT_API, QUEUE_TYPE, region, pagination_batch_size));
-        let hashmap = future.await.map_err(dyn_err)?;
-        Ok(hashmap)
-    } else {
-        let path_data_local = path_data_local.clone();
-        let future = task::spawn_blocking(move || source_fs::get_ranked_summoners(path_data_local));
-        let hashmap = future.await
-            .map_err(dyn_err)?
-            .map_err(dyn_err)?;
-        Ok(hashmap)
-    }
-}
-
-fn write_league_ids<RS>(path_data: impl AsRef<Path>, ranked_summoners: RS)
-    -> std::io::Result<()>
-where
-    RS: AsRef<HashMap<String, (Tier, String)>>
-{
-    let mut leagues = BTreeSet::new();
-    for (tier, league_id) in ranked_summoners.as_ref().values() {
-        leagues.insert(League {
-            league_id: league_id.clone(), //TODO extra clone.
-            tier: *tier,
-        });
-    };
-    source_fs::write_leagues(path_data, leagues.into_iter().rev())
-}
-
-fn write_summoners<RS>(path: impl AsRef<Path>, update_summoner_ts: u64,
-    updated_summoners_by_id: &mut HashMap<String, Summoner>,
-    ranked_summoners: RS)
-    -> Result<(), Box<dyn Error + Send>>
-where
-    RS: AsRef<HashMap<String, (Tier, String)>>
-{
-    let all_summoners = source_fs::get_all_summoners(&path).map_err(dyn_err)?;
-
-    match all_summoners {
-        None => { // THERES NO SUMMONER .CSV.GZ TO READ FROM!
-            assert!(updated_summoners_by_id.is_empty(), "all_summoners empty but updated_summoners_by_id not empty.");
-
-            let summoner_models = ranked_summoners.as_ref().iter()
-                .map(|(summoner_id, (tier, league_id))| Summoner {
-                    encrypted_summoner_id: summoner_id.clone(), // TODO extra clone.
-                    encrypted_account_id: None,
-                    league_id: Some(league_id.clone()), // TODO extra clone.
-                    rank_tier: Some(*tier),
-                    games_per_day: None,
-                    ts: None,
-                });
-
-            source_fs::write_summoners(&path, summoner_models).map_err(dyn_err)?;
-        },
-        Some(all_summoners) => {
-            // Set timestamps on updated summoner.
-            let all_summoners = all_summoners.map(move |mut summoner| {
-                // Update timestamp and games per day (TODO).
-                if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
-                    summoner.ts = Some(update_summoner_ts);
-                    summoner.encrypted_account_id = updated_summoner.encrypted_account_id;
-                    // TODO update any other things.
-                }
-                // Update tiers.
-                if let Some((tier, league_id)) = ranked_summoners.as_ref().get(&summoner.encrypted_summoner_id) {
-                    summoner.rank_tier = Some(*tier);
-                    summoner.league_id = Some(league_id.clone()); // TODO bad copy.
-                }
-                summoner
-            });
-
-            // Write summoners job.
-            source_fs::write_summoners(&path, all_summoners).map_err(dyn_err)?;
-        },
-    };
-    Ok(())
-}
 
 
 async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Result<(), Box<dyn Error>> {
@@ -230,7 +143,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
             move || source_fs::get_oldest_summoners(path_data_local, update_size))
     };
     // All ranked summoners.
-    let ranked_summoners = get_ranked_summoners(region, &path_data_local, pull_ranks);
+    let ranked_summoners = basic::get_ranked_summoners(&RIOT_API, QUEUE_TYPE, region, &path_data_local, pull_ranks);
 
     // Join match bitset and oldest selected summoners.
     let (match_hbs, oldest_summoners) = tokio::try_join!(match_hbs, oldest_summoners)?;
@@ -279,8 +192,8 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         println!("Writing updated summoners.");
         let ranked_summoners = ranked_summoners.clone();
         let path_data_local = path_data_local.clone();
-        task::spawn_blocking(move ||
-            write_summoners(path_data_local, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
+        task::spawn_blocking(move || basic::write_summoners(
+            path_data_local, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
     };
 
     // Write rank -> league csv
@@ -289,7 +202,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         // TODO: could optimize by onlying doing this when pull_ranks is true.
         let ranked_summoners = ranked_summoners.clone();
         let path_data = path_data.clone();
-        task::spawn_blocking(move || write_league_ids(path_data, ranked_summoners))
+        task::spawn_blocking(move || basic::write_league_ids(path_data, ranked_summoners))
     };
 
     // Get new match values.

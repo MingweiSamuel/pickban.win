@@ -12,7 +12,6 @@ pub struct Match {
 
 
 use chrono::{ Datelike, DateTime };
-use chrono::naive::{ NaiveDateTime, IsoWeek };
 use chrono::offset::Utc;
 use riven::models::match_v4;
 

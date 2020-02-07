@@ -1,3 +1,4 @@
+pub mod basic;
 pub mod filter;
 pub mod mapping_api;
 pub mod hybitset;
