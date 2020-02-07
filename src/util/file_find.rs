@@ -36,27 +36,27 @@ pub fn find_latest(path: impl AsRef<Path>, name: &str, ext: &str) -> Result<Opti
     Ok(latest)
 }
 
-pub fn find_after_datetime(path: impl AsRef<Path>, name: &str, ext: &str, starttime: DateTime<Utc>) -> Vec<PathBuf> {
+// pub fn find_after_datetime(path: impl AsRef<Path>, name: &str, ext: &str, starttime: DateTime<Utc>) -> Vec<PathBuf> {
     
-    let mut results: Vec<PathBuf> = vec![];
-    let pattern = format!("{}/{}.*.{}",
-        path.as_ref().to_str().expect("path has unicode"),
-        name, ext);
+//     let mut results: Vec<PathBuf> = vec![];
+//     let pattern = format!("{}/{}.*.{}",
+//         path.as_ref().to_str().expect("path has unicode"),
+//         name, ext);
 
-    for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("Bad glob.") {
-        if let Ok(entry) = entry {
-            let filename = entry.file_name().expect("No filename.");
-            let filename = filename.to_str().to_owned().expect("Failed to convert filename to string.");
-            let datestr = filename.rsplit(".").nth(2).expect("Missing datetime in filename.");
-            let datetimestamp = util::time::parse_datetimestamp(datestr)
-                .unwrap_or_else(|e| panic!("Failed to parse datetime in filename: {}", e));
-            if datetimestamp >= starttime {
-                results.push(entry);
-            }
-        }
-    }
-    results
-}
+//     for entry in glob_with(&pattern, *MATCH_OPTIONS).expect("Bad glob.") {
+//         if let Ok(entry) = entry {
+//             let filename = entry.file_name().expect("No filename.");
+//             let filename = filename.to_str().to_owned().expect("Failed to convert filename to string.");
+//             let datestr = filename.rsplit(".").nth(2).expect("Missing datetime in filename.");
+//             let datetimestamp = util::time::parse_datetimestamp(datestr)
+//                 .unwrap_or_else(|e| panic!("Failed to parse datetime in filename: {}", e));
+//             if datetimestamp >= starttime {
+//                 results.push(entry);
+//             }
+//         }
+//     }
+//     results
+// }
 
 #[cfg(test)]
 mod test {

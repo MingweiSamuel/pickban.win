@@ -61,7 +61,7 @@ mod util;
 mod model;
 mod pipeline;
 
-// use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{ Path, PathBuf };
@@ -79,6 +79,7 @@ use tokio::task;
 
 use model::summoner::Summoner;
 use model::r#match::{ MatchFileKey, Match };
+use model::league::League;
 use pipeline::source_fs;
 use pipeline::source_api;
 use pipeline::mapping_api;
@@ -128,6 +129,21 @@ async fn get_ranked_summoners(region: Region, path_data_local: &PathBuf, pull_ra
             .map_err(dyn_err)?;
         Ok(hashmap)
     }
+}
+
+fn write_league_ids<RS>(path_data: impl AsRef<Path>, ranked_summoners: RS)
+    -> std::io::Result<()>
+where
+    RS: AsRef<HashMap<String, (Tier, String)>>
+{
+    let mut leagues = BTreeSet::new();
+    for (tier, league_id) in ranked_summoners.as_ref().values() {
+        leagues.insert(League {
+            league_id: league_id.clone(), //TODO extra clone.
+            tier: *tier,
+        });
+    };
+    source_fs::write_leagues(path_data, leagues.into_iter().rev())
 }
 
 fn write_summoners<RS>(path: impl AsRef<Path>, update_summoner_ts: u64,
@@ -241,7 +257,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
     let new_match_ids = mapping_api::get_new_matchids(
         &RIOT_API, region, QUEUE, 20, starttime, &oldest_summoners, &mut match_hbs).await;
-    println!("New matches found: {}.", new_match_ids.len());
+    println!("Getting new matches, count: {}.", new_match_ids.len());
     // Updated summoners to update in CSV.
     let mut updated_summoners_by_id = oldest_summoners.into_iter()
         // TODO extra clone.
@@ -249,12 +265,6 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         .collect::<HashMap<_, _>>();
 
     let write_match_hbs = pipeline::hybitset::write_match_hybitset(&path_data_local, &match_hbs);
-
-    // Get new match values.
-    // TODO: this should stream (?).
-    let new_matches = mapping_api::get_matches(
-        &RIOT_API, region, 20, new_match_ids);
-    let new_matches = new_matches.await;
 
     // Completion of ranked_summoners map.
     let ranked_summoners = ranked_summoners.await
@@ -266,11 +276,28 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
     // Read back and update summoners.
     let write_summoners = {
+        println!("Writing updated summoners.");
         let ranked_summoners = ranked_summoners.clone();
         let path_data_local = path_data_local.clone();
         task::spawn_blocking(move ||
             write_summoners(path_data_local, update_summoner_ts, &mut updated_summoners_by_id, ranked_summoners))
     };
+
+    // Write rank -> league csv
+    let write_leagues = {
+        println!("Writing leagues.");
+        // TODO: could optimize by onlying doing this when pull_ranks is true.
+        let ranked_summoners = ranked_summoners.clone();
+        let path_data = path_data.clone();
+        task::spawn_blocking(move || write_league_ids(path_data, ranked_summoners))
+    };
+
+    // Get new match values.
+    // TODO: this should stream (?).
+    let new_matches = mapping_api::get_matches(
+        &RIOT_API, region, 20, new_match_ids);
+    let new_matches = new_matches.await;
+    println!("Completed getting matches.");
 
     // Handle matches.
     // Matches grouped by their file key for convenient access.
@@ -324,6 +351,7 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         res??;
     }
     write_summoners.await?.map_err(|e| e as Box<dyn Error>)?;
+    write_leagues.await??;
     write_match_hbs.await?;
 
     println!("Done.");

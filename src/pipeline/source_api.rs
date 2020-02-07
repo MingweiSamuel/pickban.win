@@ -38,7 +38,7 @@ pub async fn get_ranked_summoners(api: &RiotApi, queue_type: QueueType, region: 
                     },
                     Ok(league_entries) => {
                         if 0 == league_entries.len() {
-                            println!("{} {} DONE. <{} pages.", tier, division, page - 1);
+                            println!("  {} {} DONE. <{} pages.", tier, division, page - 1);
                             break 'batchloop;
                         };
                         let summoners_by_id = league_entries

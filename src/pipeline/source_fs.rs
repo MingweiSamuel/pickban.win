@@ -12,22 +12,23 @@ use crate::util::file_find;
 use crate::util::time;
 use crate::model::r#match::Match;
 use crate::model::summoner::{ Summoner, SummonerOldest, SummonerHighestRanked };
+use crate::model::league::League;
 use super::filter;
 
 
-pub fn get_match_hybitset(path: impl AsRef<Path>, starttime: DateTime<Utc>) -> HyBitSet {
-    let mut hbs = HyBitSet::new();
+// pub fn get_match_hybitset(path: impl AsRef<Path>, starttime: DateTime<Utc>) -> HyBitSet {
+//     let mut hbs = HyBitSet::new();
 
-    for path in file_find::find_after_datetime(path, "match", "tar.gz", starttime) {
-        let mut match_reader = csvgz::reader(path).expect("Failed to read.");
-        for mat in match_reader.deserialize() {
-            let mat: Match = mat.expect("Failed to deserialize match.");
-            hbs.insert(mat.match_id as usize);
-        }
-    }
+//     for path in file_find::find_after_datetime(path, "match", "tar.gz", starttime) {
+//         let mut match_reader = csvgz::reader(path).expect("Failed to read.");
+//         for mat in match_reader.deserialize() {
+//             let mat: Match = mat.expect("Failed to deserialize match.");
+//             hbs.insert(mat.match_id as usize);
+//         }
+//     }
 
-    hbs
-}
+//     hbs
+// }
 
 #[allow(dead_code)]
 pub fn get_all_summoners(path: impl AsRef<Path>)
@@ -76,6 +77,18 @@ pub fn get_ranked_summoners(path: impl AsRef<Path>)
     }
 
     Ok(out)
+}
+
+pub fn write_leagues(path: impl AsRef<Path>, leagues: impl Iterator<Item = League>) -> std::io::Result<()> {
+    let path = path.as_ref().join(format!("leagueIds.csv.gz"));
+
+    let mut writer = csvgz::writer(path).expect("Failed to write leagueIds file.");
+    for league in leagues {
+        writer.serialize(league)?;
+    }
+    writer.flush()?;
+
+    Ok(())
 }
 
 pub fn write_summoners(path: impl AsRef<Path>, summoners: impl Iterator<Item = Summoner>) -> std::io::Result<()> {
