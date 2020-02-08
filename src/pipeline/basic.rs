@@ -78,6 +78,7 @@ where
                 if let Some(updated_summoner) = updated_summoners_by_id.remove(&summoner.encrypted_summoner_id) {
                     summoner.ts = Some(update_summoner_ts);
                     summoner.encrypted_account_id = updated_summoner.encrypted_account_id;
+                    summoner.games_per_day = updated_summoner.games_per_day;
                     // TODO update any other things.
                 }
                 // Update tiers.

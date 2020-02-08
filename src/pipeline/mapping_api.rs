@@ -1,3 +1,5 @@
+use std::cmp;
+
 use chrono::DateTime;
 use chrono::offset::Utc;
 use futures::future::join_all;
@@ -8,6 +10,10 @@ use riven::RiotApi;
 
 use crate::model::summoner::Summoner;
 use crate::util::hybitset::HyBitSet;
+
+
+const MILLIS_PER_DAY: usize = 24 * 3600 * 1000;
+
 
 pub async fn update_missing_summoner_account_ids(
     api: &RiotApi, region: Region, chunk_size: usize, mut summoners: Vec<Summoner>) -> Vec<Summoner>
@@ -35,22 +41,24 @@ pub async fn update_missing_summoner_account_ids(
     summoners
 }
 
-pub async fn get_new_matchids(
+pub async fn get_new_matchids_update_summoner_gpd(
     api: &RiotApi, region: Region, queue: Queue,
     batch_size: usize, starttime: DateTime<Utc>,
-    oldest_summoners: &Vec<Summoner>, match_hbs: &mut HyBitSet)
+    oldest_summoners: &mut Vec<Summoner>, match_hbs: &mut HyBitSet)
     -> Vec<i64>
 {
+    let now_millis = Utc::now().timestamp_millis();
     // Chunk size? Shitty parallelism?
     let mut new_matches = vec![];
-    for summoners_chunk in oldest_summoners.iter().collect::<Vec<_>>().chunks(batch_size) {
-        let chunk_futures = summoners_chunk.into_iter()
+    for summoners_chunk in oldest_summoners.chunks_mut(batch_size) {
+        let chunk_futures = summoners_chunk.iter()
             .filter(|summoner| summoner.encrypted_account_id.is_some())
             .map(|summoner| {
+                let begin_millis = cmp::max(starttime.timestamp_millis(), summoner.ts.unwrap_or(0) as i64);
                 let matches_dto = api.match_v4().get_matchlist(
                     region,
                     summoner.encrypted_account_id.as_ref().unwrap(),
-                    Some(starttime.timestamp_millis()), // begin_time
+                    Some(begin_millis), // begin_time
                     None, // begin_index
                     None, // champion
                     None, // end_time
@@ -61,13 +69,32 @@ pub async fn get_new_matchids(
                 matches_dto
             }).collect::<Vec<_>>();
 
-        let lists_of_matches = join_all(chunk_futures).await;
-        let lists_of_matches = lists_of_matches.into_iter()
-            .flat_map(|m: riven::Result<Option<riven::models::match_v4::Matchlist>>| m.expect("Failed to get matchlist").map_or(vec![], |m| m.matches));
-        for matche in lists_of_matches {
+        let list_of_lists_of_matches = join_all(chunk_futures).await;
+
+        let lists_of_match_ids = list_of_lists_of_matches.into_iter()
+            .zip(summoners_chunk.iter_mut())
+            .flat_map(|(m, summoner): (riven::Result<Option<riven::models::match_v4::Matchlist>>, &mut Summoner)| {
+                let matchlist_opt = m.expect("Failed to get matchlist");
+                match matchlist_opt {
+                    Some(matchlist) => {
+                        // TODO: duplicate begin_time for each summoner.
+                        // Code here updates games_per_day.
+                        let begin_millis = cmp::max(starttime.timestamp_millis(), summoner.ts.unwrap_or(0) as i64);
+                        let delta_millis = now_millis - begin_millis;
+                        let new_games_per_day = ((matchlist.matches.len() * MILLIS_PER_DAY) as f32) / (delta_millis as f32);
+                        let old_games_per_day = summoner.games_per_day.unwrap_or(new_games_per_day);
+                        summoner.games_per_day = Some((old_games_per_day + new_games_per_day) / 2.0);
+                        // Return matchlist.
+                        matchlist.matches
+                    },
+                    None => vec![],
+                }
+            })
+            .map(|matche| matche.game_id);
+        for match_id in lists_of_match_ids {
             // Insert into bitmap. If match was not in bitmap, then add it to new_matches.
-            if !match_hbs.insert(matche.game_id as usize) {
-                new_matches.push(matche.game_id);
+            if !match_hbs.insert(match_id as usize) {
+                new_matches.push(match_id);
             }
         }
     }

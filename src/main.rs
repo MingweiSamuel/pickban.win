@@ -163,13 +163,13 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
     println!("Obtained oldest summoners, count: {}.", oldest_summoners.len());
 
     // Get new match IDs via matchlist.
-    let oldest_summoners = mapping_api::update_missing_summoner_account_ids(
+    let mut oldest_summoners: Vec<Summoner> = mapping_api::update_missing_summoner_account_ids(
         &RIOT_API, region, 20, oldest_summoners).await;
     println!("Added missing account IDs, cound: {}.", oldest_summoners.len());
     let update_summoner_ts: u64 = time::epoch_millis();
 
-    let new_match_ids = mapping_api::get_new_matchids(
-        &RIOT_API, region, QUEUE, 20, starttime, &oldest_summoners, &mut match_hbs).await;
+    let new_match_ids = mapping_api::get_new_matchids_update_summoner_gpd(
+        &RIOT_API, region, QUEUE, 20, starttime, &mut oldest_summoners, &mut match_hbs).await;
     println!("Getting new matches, count: {}.", new_match_ids.len());
     // Updated summoners to update in CSV.
     let mut updated_summoners_by_id = oldest_summoners.into_iter()
@@ -247,12 +247,6 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
             .collect::<Vec<_>>();
 
         let iso_week_str = format!("{:04}-W{:02}", iso_week.0, iso_week.1);
-        // println!("Version: {:?}, Iso Week: {}.", version, iso_week_str);
-        // for matche in &matches {
-            
-        //     println!("    {} ({:?})", matche.game_id, avg_tier);
-        //     model_matches.push()
-        // }
 
         let write_matches = task::spawn_blocking(
             move || source_fs::write_matches(&path_data_key, &iso_week_str, model_matches.iter()));
