@@ -7,6 +7,7 @@ use itertools::Itertools;
 use riven::consts::{ Region, Queue };
 use riven::models::match_v4::Match;
 use riven::RiotApi;
+use tokio::sync::mpsc;
 
 use crate::model::summoner::Summoner;
 use crate::util::hybitset::HyBitSet;
@@ -101,11 +102,11 @@ pub async fn get_new_matchids_update_summoner_gpd(
     new_matches
 }
 
-pub async fn get_matches(
+pub async fn get_matches_mpsc(sender: mpsc::UnboundedSender<Match>,
     api: &RiotApi, region: Region, chunk_size: usize, match_ids: Vec<i64>)
-    -> Vec<Match>
+    -> Result<usize, mpsc::error::SendError<Match>>
 {
-    let mut matches_out = vec![];
+    let mut count = 0;
     for match_ids_chunk in match_ids.chunks(chunk_size) {
 
         let chunk_futures = match_ids_chunk.into_iter()
@@ -117,7 +118,31 @@ pub async fn get_matches(
             .filter_map(|m| m.ok()) // Remove errors (TODO: silent).
             .filter_map(|m| m); // Remove 404 (TODO: silent).
 
-        matches_out.extend(matches);
+        for matche in matches {
+            sender.send(matche)?;
+            count += 1;
+        }
     }
-    matches_out
+    Ok(count)
 }
+
+// pub async fn get_matches(
+//     api: &RiotApi, region: Region, chunk_size: usize, match_ids: Vec<i64>)
+//     -> Vec<Match>
+// {
+//     let mut matches_out = vec![];
+//     for match_ids_chunk in match_ids.chunks(chunk_size) {
+
+//         let chunk_futures = match_ids_chunk.into_iter()
+//             .map(|match_id| api.match_v4().get_match(region, *match_id))
+//             .collect::<Vec<_>>();
+
+//         let matches = join_all(chunk_futures).await;
+//         let matches = matches.into_iter()
+//             .filter_map(|m| m.ok()) // Remove errors (TODO: silent).
+//             .filter_map(|m| m); // Remove 404 (TODO: silent).
+
+//         matches_out.extend(matches);
+//     }
+//     matches_out
+// }

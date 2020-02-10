@@ -68,11 +68,13 @@ use std::sync::Arc;
 use chrono::{ Duration };
 use chrono::offset::Utc;
 use futures::future::join_all;
-use itertools::Itertools;
+// use itertools::Itertools;
 use riven::{ RiotApi, RiotApiConfig };
-use riven::consts::{ Region, Queue, QueueType };
+use riven::consts::{ Region, Queue, QueueType, Tier };
+use riven::models::match_v4;
 use tokio::fs;
 use tokio::task;
+use tokio::sync::mpsc;
 
 use model::summoner::Summoner;
 use model::r#match::{ MatchFileKey, Match };
@@ -207,20 +209,30 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
     // Get new match values.
     // TODO: this should stream (?).
-    let new_matches = mapping_api::get_matches(
-        &RIOT_API, region, 20, new_match_ids);
-    let new_matches = new_matches.await;
-    println!("Completed getting matches.");
+    let (matches_sender, matches_receiver) = mpsc::unbounded_channel();
+    let matches_mpsc = tokio::spawn(mapping_api::get_matches_mpsc(matches_sender,
+        &RIOT_API, region, 40, new_match_ids));
+
+    // let new_matches = new_matches.await;
+    println!("Started getting matches.");
 
     // Handle matches.
     // Matches grouped by their file key for convenient access.
-    let grouped_new_matches = new_matches.into_iter()
-        .map(|matche| (MatchFileKey::from(&matche), matche))
-        .into_group_map();
+    let grouped_new_matches = handle_matches(matches_receiver, ranked_summoners.clone()).await;
+
+    // Collect any errors from matches mpsc.
+    {
+        let count = matches_mpsc.await??;
+        println!("Fetched {} matches.", count);
+    }
+
+    // let grouped_new_matches = new_matches.into_iter()
+    //     .map(|matche| (MatchFileKey::from(&matche), matche))
+    //     .into_group_map();
 
     let mut write_matches_tasks = Vec::with_capacity(grouped_new_matches.len());
 
-    for (match_key, matches) in grouped_new_matches {
+    for (match_key, model_matches) in grouped_new_matches {
         let version = match_key.version;
         let iso_week = match_key.iso_week;
 
@@ -229,22 +241,22 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
         path_data_key.push(format!("{}.{}", version.0, version.1));
         fs::create_dir_all(&path_data_key).await?;
 
-        let model_matches = matches.iter()
-            .map(|matche| {
-                let tiers = matche.participant_identities.iter()
-                    .map(|participant| {
-                        ranked_summoners.get(&participant.player.summoner_id)
-                            .map(|(tier, _league_id)| tier)
-                            .cloned()
-                    });
-                let avg_tier = util::lol::match_avg_tier(tiers);
-                Match {
-                    match_id: matche.game_id as u64,
-                    rank_tier: avg_tier,
-                    ts: matche.game_creation as u64,
-                }
-            })
-            .collect::<Vec<_>>();
+        // let model_matches = matches.iter()
+        //     .map(|matche| {
+        //         let tiers = matche.participant_identities.iter()
+        //             .map(|participant| {
+        //                 ranked_summoners.get(&participant.player.summoner_id)
+        //                     .map(|(tier, _league_id)| tier)
+        //                     .cloned()
+        //             });
+        //         let avg_tier = util::lol::match_avg_tier(tiers);
+        //         Match {
+        //             match_id: matche.game_id as u64,
+        //             rank_tier: avg_tier,
+        //             ts: matche.game_creation as u64,
+        //         }
+        //     })
+        //     .collect::<Vec<_>>();
 
         let iso_week_str = format!("{:04}-W{:02}", iso_week.0, iso_week.1);
 
@@ -263,6 +275,32 @@ async fn run_async(region: Region, update_size: usize, pull_ranks: bool) -> Resu
 
     println!("Done.");
     Ok(())
+}
+
+async fn handle_matches(mut matches_receiver: mpsc::UnboundedReceiver<match_v4::Match>,
+    ranked_summoners: Arc<HashMap<String, (Tier, String)>>)
+    -> HashMap<MatchFileKey, Vec<Match>>
+{
+    let mut out = HashMap::new();
+    while let Some(matche) = matches_receiver.recv().await {
+        let match_key = MatchFileKey::from(&matche);
+
+        let tiers = matche.participant_identities.iter()
+            .map(|participant| {
+                ranked_summoners.get(&participant.player.summoner_id)
+                    .map(|(tier, _league_id)| tier)
+                    .cloned()
+            });
+        let avg_tier = util::lol::match_avg_tier(tiers);
+
+        let vec = out.entry(match_key).or_insert_with(Vec::new);
+        vec.push(Match {
+            match_id: matche.game_id as u64,
+            rank_tier: avg_tier,
+            ts: matche.game_creation as u64,
+        })
+    };
+    out
 }
 
 pub fn main() {
