@@ -121,6 +121,9 @@ pub async fn get_matches_mpsc(sender: mpsc::UnboundedSender<Match>,
         for matche in matches {
             sender.send(matche)?;
             count += 1;
+            if 0 == count % 10_000 {
+                println!("  Fetched {} matches so far.", count);
+            }
         }
     }
     Ok(count)
